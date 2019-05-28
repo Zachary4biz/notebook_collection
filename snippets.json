@@ -1,0 +1,25 @@
+{
+    "snippets" : [
+        {
+            "name" : "example",
+            "code" : [
+                "# This is an example snippet!",
+                "# To create your own, add a new snippet block to the",
+                "# snippets.json file in your jupyter nbextensions directory:",
+                "# /nbextensions/snippets/snippets.json",
+                "import this"
+            ]
+        },
+        {
+            "name" : "init",
+            "code" : [
+                "from IPython.core.interactiveshell import InteractiveShell",
+                "InteractiveShell.ast_node_interactivity = \"all\"",
+                "%matplotlib inline",
+                "from tqdm import tqdm_notebook",
+                "import concurrent.futures",
+                "from multiprocessing import Pool"
+            ]
+        }
+    ]
+}
