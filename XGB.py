@@ -14,7 +14,7 @@ import copy,os,sys,psutil
 from collections import Counter
 
 
-# In[25]:
+# In[82]:
 
 
 from zac_pyutils import ExqUtils
@@ -25,6 +25,7 @@ from sklearn.model_selection import KFold, train_test_split, GridSearchCV
 from sklearn.datasets import load_iris, load_digits, load_boston
 from sklearn.metrics import confusion_matrix, mean_squared_error
 import pickle
+from xgboost import plot_importance
 
 
 # In[32]:
@@ -351,15 +352,17 @@ pickle.dump(clf, open("/home/zhoutong/data/nlp/best_from_clf.xgb.pkl", "wb"))
 # print(np.allclose(clf.predict(feature), clf2.predict(feature)))
 
 
-# # 正式Demo
+# # 正式Demo | 使用外部真实数据
 
-# In[11]:
+# In[83]:
 
 
 from zac_pyutils import ExqUtils
 import pandas as pd
 import xgboost as xgb
 import numpy as np
+from sklearn import metrics
+from xgboost import plot_importance
 
 
 # ## prepare
@@ -381,9 +384,11 @@ df.shape
 feature[:2]
 
 
-# ## model
+# ## by GridSearchCV
 
-# In[65]:
+# ### model 
+
+# In[67]:
 
 
 model_param = {
@@ -398,28 +403,95 @@ train_param = {
     'eval_set': None,
     'eval_metric': None,
 }
-xgb_model = xgb.XGBRegressor()
+xgb_model = xgb.XGBClassifier(**model_param)
 params_grid = {
     'max_depth': [2,4],
     'n_estimators': [10,50,70,100],
-    'learning_rate': [0.001,0.1,0.02]
+    'learning_rate': [0.001,0.02,0.1]
 }
 # clf = GridSearchCV(xgb_model, params_grid, verbose=1, cv=4, scoring=['roc_auc','f1'],refit='roc_auc')
 clf = GridSearchCV(xgb_model, params_grid, verbose=2, cv=3, scoring='roc_auc')
 
 
-# ## fit
+# ### fit
 
-# In[ ]:
+# In[68]:
 
 
 clf.fit(feature,label,sample_weight=weight)
 
 
-# In[ ]:
+# ### serialize
+
+# In[69]:
 
 
 pickle.dump(clf, open("/home/zhoutong/data/nlp/best_from_clf.xgb.pkl", "wb"))
+
+
+# In[89]:
+
+
+clf2 = pickle.load(open("/home/zhoutong/data/nlp/best_from_clf.xgb.pkl", "rb"))
+print(np.allclose(clf.predict(feature), clf2.predict(feature)))
+plot_importance(clf2.best_estimator_)
+
+
+# In[70]:
+
+
+def log_details(searcher):
+    print(">>> searcher.param_grid:\n",searcher.param_grid)
+    print(">>> searcher.best_score_:\n",searcher.best_score_)
+    print(">>> searcher.best_params_:\n",searcher.best_params_)
+
+    print(">>> searcher.cv_results_:\n")
+    targetItems = [
+        'mean_train_score','mean_test_score',
+    #     'mean_fit_time','mean_score_time',
+    ]
+    for i in range(0,len(searcher.cv_results_['params'])):
+        cur_param = searcher.cv_results_['params'][i]
+        print(",".join([item+": "+"{:.3f}".format(searcher.cv_results_[item][i]) for item in targetItems])+f", {cur_param}")
+        
+log_details(clf)
+
+
+# ## by KFold & Manual
+
+# ### model
+
+# In[77]:
+
+
+model_param = {
+    'learning_rate': 0.1,
+    'n_estimators': 100,
+    'max_depth': 4,
+    'objective': 'binary:logistic',
+    'booster': 'gbtree',
+    'nthread': None,
+}
+train_param = {
+    'eval_set': None,
+    'eval_metric': None,
+}
+
+
+# ### fit
+
+# In[93]:
+
+
+kf = KFold(n_splits=6,shuffle=True,random_state=2019)
+for (train_index, test_index) in kf.split(feature):
+    print(f"train: {len(train_index)}, test: {len(test_index)}")
+#     train_param['X'] = feature[train_index]
+#     train_param['y'] = label[train_index]
+#     train_param['sample_weight'] = weight[train_index]
+#     xgb_model = xgb.XGBClassifier(**model_param).fit(**train_param)
+    predictions = clf2.best_estimator_.predict(feature[test_index])
+    print("roc_auc_score:\n",metrics.roc_auc_score(label[test_index], predictions))
 
 
 # In[ ]:

@@ -1,0 +1,214 @@
+
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+%matplotlib inline
+from tqdm import tqdm_notebook
+import concurrent.futures
+from multiprocessing import Pool
+import copy,os,sys,psutil
+from collections import Counter
+
+from zac_pyutils import ExqUtils
+import pandas as pd
+import xgboost as xgb
+import numpy as np
+from sklearn.model_selection import KFold, train_test_split, GridSearchCV
+from sklearn.datasets import load_iris, load_digits, load_boston
+from sklearn.metrics import confusion_matrix, mean_squared_error
+import pickle
+
+%run loadUtil.py # 基础工具类
+
+fileIter = ExqUtils.load_file_as_iter("./data/nlp/sample_data.txt")
+def func(iter_list): return [i.split("\t") for i in iter_list]
+ExqUtils.map_on_iter(fileIter,func,chunk_size=5)
+
+df_chunkList = pd.read_csv("./data/nlp/sample_data.txt", 
+            delimiter="\t",
+            names=['id','label','weight','feature'],
+            chunksize=5,
+#             iterator=False,
+           )
+
+def my_test(a,b): return str(a)+"\t"+str(b)
+
+for chunk in df_chunkList:
+    chunk['feature'] = chunk['feature'].map(lambda x: x.split(","))
+    chunk['id+label'] = chunk.apply(lambda row: my_test(row['id'],row['label']),axis=1)
+    chunk.to_csv("./data/nlp/sample_data_processed.txt",mode='a',sep='\t',header=False)
+    
+df_load = pd.read_csv("./data/nlp/sample_data_processed.txt",delimiter="\t",names=['id','label','weight','feature',"label+feature"])
+df_load['feature'].map(lambda r: [float(i) for i in eval(r)])
+
+
+label = loadUtil.loadSampleCSV()['label'].values
+weight = loadUtil.loadSampleCSV()['weight'].values
+feature = loadUtil.loadSampleCSV()['feature'].map(lambda x: [eval(i) for i in x.split(",")]).values
+feature = np.asarray(feature.tolist())
+train = xgb.DMatrix(data=feature,weight=weight,label=label)
+
+def my_eval(preds,dtrain):
+    label=dtrain.get_label()
+    preds = 1.0/(1.0+np.exp(-preds)) # 输出sigmoid一下
+    pred = [int(i >= 0.5) for i in preds]
+    tp = sum([int(i == 1 and j == 1) for i,j in zip(pred,label)])
+    precision=float(tp)/sum(pred)
+    recall=float(tp)/sum(label)
+    return 'f1-score',2 * ( precision*recall/(precision+recall) )
+
+def my_obj(y_pre,dtrain):
+    label=dtrain.get_label()
+    penalty=2.0
+    grad=-label/y_pre+penalty*(1-label)/(1-y_pre) #梯度
+    hess=label/(y_pre**2)+penalty*(1-label)/(1-y_pre)**2 #2阶导
+    return grad,hess
+
+num_round = 100
+param = {
+    'max_depth':5,
+    'eta':0.9,
+    'verbosity':3,
+    'objective':'reg:linear',
+    'nthread':4,
+    'eval_metric':['auc']
+}
+bst = xgb.train(param, dtrain, num_round, evallist,feval=f1_error)
+
+bst.save_model("./data/nlp/xgb_model.bin")
+# dump得到的是info信息，后续不能直接拿来predict
+bst.dump_model("./data/nlp/xgb_model.json",dump_format="json")
+bst.dump_model("./data/nlp/xgb_model.txt",dump_format="text")
+
+bst_load = xgb.Booster({'nthread':4}) # init model
+bst_load.load_model("/home/zhoutong/xgb_001.model.bin") # load data
+bst.predict(data)
+
+xgb.plot_importance(bst_load)
+
+feat_imp_gain=bst.get_score(importance_type='gain')
+feat_imp = bst.get_score(importance_type='weight')
+feat_imp['f123345']
+feat_imp_gain['f123345']
+
+# df = loadUtil.loadDataCSV() # 正式数据
+df = loadUtil.loadSampleCSV() # 10条样例数据
+label = df['label'].values
+weight = df['weight'].values
+feature = df['feature'].map(lambda x: [eval(i) for i in x.split(",")]).values
+feature = np.asarray(feature.tolist())
+feature
+print("label分类情况：",Counter(label))
+
+model_param = {
+    'max_depth': 6,
+    'learning_rate': 0.1,
+    'n_estimators': 20,
+    'objective': 'binary:logistic',
+    'booster': 'gbtree',
+    'nthread': None,
+}
+train_param = {
+    'eval_set': None,
+    'eval_metric': None,
+}
+
+# 1/n_splits 比例的样本作为测试集，重复n_splits（即所有样本都作为测试集迭代过）
+kf = KFold(n_splits=3,shuffle=True,random_state=2019)
+for (train_index, test_index) in kf.split(feature):
+#     print("\n\ntrain&test index:",train_index,test_index)
+    train_param['X'] = feature[train_index]
+    train_param['y'] = label[train_index]
+    train_param['sample_weight'] = weight[train_index]
+    xgb_model = xgb.XGBClassifier(**model_param).fit(**train_param)
+    predictions = xgb_model.predict(feature[test_index])
+    print("confusion_matrix:\n",confusion_matrix(label[test_index], predictions))
+
+model_param = {
+    'max_depth': 6,
+    'learning_rate': 0.1,
+    'n_estimators': 20,
+    'objective': 'binary:logistic',
+    'booster': 'gbtree',
+    'nthread': None,
+}
+train_param = {
+    'X': feature,
+    'y': label,
+    'eval_set': None,
+    'eval_metric': None,
+}
+xgb_model = xgb.XGBRegressor(**model_param)
+
+params_grid = {
+    'max_depth': [1,2,3,4,5,6],
+    'n_estimators': [10,15,20,50,52,55,60,70,80],
+}
+clf = GridSearchCV(xgb_model, params_grid, verbose=1, cv=4, scoring='roc_auc')
+clf.fit(feature,label,sample_weight=weight)
+
+def log_details(searcher):
+    print(">>> searcher.param_grid:\n",searcher.param_grid)
+    print(">>> searcher.best_score_:\n",searcher.best_score_)
+    print(">>> searcher.best_params_:\n",searcher.best_params_)
+
+    print(">>> searcher.cv_results_:\n")
+    targetItems = [
+        'mean_train_score','mean_test_score',
+    #     'mean_fit_time','mean_score_time',
+    ]
+    for i in range(0,len(searcher.cv_results_['params'])):
+        cur_param = searcher.cv_results_['params'][i]
+        print(",".join([item+": "+"{:.3f}".format(searcher.cv_results_[item][i]) for item in targetItems])+f", {cur_param}")
+        
+log_details(clf)
+
+pickle.dump(clf, open("/home/zhoutong/data/nlp/best_from_clf.xgb.pkl", "wb"))
+# 下面是检验一下模型保存后load出来是否还和之前一样
+# clf2 = pickle.load(open("./data/nlp/best_from_clf.xgb.pkl", "rb"))
+# print(np.allclose(clf.predict(feature), clf2.predict(feature)))
+
+from zac_pyutils import ExqUtils
+import pandas as pd
+import xgboost as xgb
+import numpy as np
+
+path_test = "/home/zhoutong/data/nlp/tagged_corpus_byW2V_id_label_weight_feat_6.9w.txt"
+path_train = "/home/zhoutong/data/nlp/tagged_corpus_byW2V_id_label_weight_feat_28w.txt"
+df_test = pd.read_csv(path_test, delimiter="\t", names=['id','label','weight','feature'])
+df_train = pd.read_csv(path_train, delimiter="\t", names=['id','label','weight','feature'])
+df = pd.concat([df_test,df_train])
+label = df['label'].values
+weight = df['weight'].values
+feature = df['feature'].map(lambda x : [float(i) for i in x.split(",")]).values
+feature = np.asarray(feature.tolist())
+df.head(2)
+df.shape
+feature[:2]
+
+model_param = {
+    'max_depth': 6,
+    'learning_rate': 0.1,
+    'n_estimators': 20,
+    'objective': 'binary:logistic',
+    'booster': 'gbtree',
+    'nthread': None,
+}
+train_param = {
+    'eval_set': None,
+    'eval_metric': None,
+}
+xgb_model = xgb.XGBClassifier(**model_param)
+params_grid = {
+    'max_depth': [2,4],
+    'n_estimators': [10,50,70,100],
+    'learning_rate': [0.001,0.1,0.02]
+}
+# clf = GridSearchCV(xgb_model, params_grid, verbose=1, cv=4, scoring=['roc_auc','f1'],refit='roc_auc')
+clf = GridSearchCV(xgb_model, params_grid, verbose=2, cv=3, scoring='roc_auc')
+
+
+clf.fit(feature,label,sample_weight=weight)
+
+pickle.dump(clf, open("/home/zhoutong/data/nlp/best_from_clf.xgb.pkl", "wb"))
+
+
