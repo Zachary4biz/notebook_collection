@@ -133,21 +133,23 @@ with tf.Session() as sess:
 # In[148]:
 
 
+# 计算好emb
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     emb_tokens = sess.run(emb_opt_tokens['elmo'])
     emb_sentence = sess.run(emb_opt_sentence['elmo'])
 
 
-# In[153]:
+# In[167]:
 
 
+print("sentences: ", sentences)
 for sen_idx in [0,1]:
-    sentences[sen_idx]
-    tokens_list[sen_idx]
+    print("\n>>> 使用tokens_list: ", tokens_list[sen_idx])
     consistent = np.all(emb_tokens[sen_idx] == emb_sentence[sen_idx])
-    print("elmo的一致性：",consistent)
+    print("两种输入方式下 elmo 的一致性：",consistent)
     if not consistent:
+        print("不一致时，tokens和sentence两种方式的tensor值示例：")
         emb_tokens[sen_idx]
         emb_sentence[sen_idx]
 
