@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[61]:
+# In[6]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
@@ -14,10 +14,12 @@ import copy,os,sys,psutil
 from collections import Counter
 
 
-# In[120]:
+# In[16]:
 
 
 import numpy as np
+from zac_pyutils import ExqUtils
+from sklearn import metrics
 
 
 # # PyTorch AllenNLP
@@ -47,12 +49,12 @@ embeddings = elmo(character_ids)['elmo_representations']
 # - [Introduction to TensorflowHub: Simple Text Embedding(Using ELMo)](https://medium.com/@joeyism/embedding-with-tensorflow-hub-in-a-simple-way-using-elmo-d1bfe0ada45c)
 # - [Tensorflow+Keras做ELMo（中文翻译）](https://ai.yanxishe.com/page/TextTranslation/1597)
 
-# In[6]:
+# In[13]:
 
 
 import tensorflow as tf
 import tensorflow_hub as hub
-elmo = hub.Module("https://tfhub.dev/google/elmo/2")
+elmo = hub.Module("https://tfhub.dev/google/elmo/2", trainable=True) # trainable=True 是指使用'elmo'模式的向量结果时，ELMo的线性加和权重是可以训练的
 
 
 # ## 参考自[TensorflowHub的官网](https://tfhub.dev/google/elmo/2)
@@ -67,8 +69,12 @@ elmo = hub.Module("https://tfhub.dev/google/elmo/2")
 #     - 上述两种方式的结果是完全一致的
 # - `as_dict`
 #     - 不提供参数 `as_dict`时（默认为 `False`），会使用`default`。即 `elmo(tokens, as_dict=True)['default']` = `elmo(tokens)`
+# - 有句子sen0,sen1,sen2；
+#   - 分开输入：分三次输入（使用'default'）得到三个句子向量emb0,emb1,emb2；
+#   - 一次输入：作为一个list [sen0,sen1,sen2] 一次性输入，得到一个emb_list；
+#   - 根据测试结果来看，emb_lit[0] 和 emb0 余弦相似度 0.99999+
 
-# In[131]:
+# In[11]:
 
 
 # 使用 signature = default， 输入是句子
@@ -76,17 +82,18 @@ sentences = ["the cat is on the mat", "dogs are in the fog"]
 emb_opt_sentence = elmo(inputs=sentences, as_dict=True)
 
 # 使用 signature = tokens, 输入是字典，包含 tokens 和 sequence_len 注意需要padding
-def padding(tokens_inp):
+def padding(tokens_inp,pad=""):
     pad_len = max([len(i) for i in tokens_inp])
-    return [(i+[""]*pad_len)[:pad_len] for i in tokens_inp]
+    return [(i+[pad]*pad_len)[:pad_len] for i in tokens_inp]
 
 tokens_list = ["the cat is on the mat".split(" "),"dogs are in the fog".split(" ")]
-tokens_list = padding(tokens_list)
+tokens_list = padding(tokens_list,"__PAD__")
 tokens_len = [len(i) for i in tokens_list]
 input_dict = {
     'tokens': tokens_list,
     'sequence_len' : tokens_len
 }
+input_dict
 emb_opt_tokens = elmo(inputs=input_dict, signature='tokens', as_dict=True)
 
 
@@ -94,22 +101,27 @@ emb_opt_tokens = elmo(inputs=input_dict, signature='tokens', as_dict=True)
 # > The output dictionary contains:
 # >- <u>word_emb</u>: 
 # >    - the character-based word representations 
+# >    - general embedding 与上下文无关，ELMo使用的是charater-based CNN + Highway
 # >    - `elmo(tokens, as_dict=True)['word_emb']`
 # >    - *[batch_size, max_length, 512]*
 # >- <u>lstm_outputs1</u>: 
 # >    - the first LSTM hidden state 
+# >    - 双向LSTM中的一个
 # >    - `elmo(tokens, as_dict=True)['lstm_outputs1']`
 # >    - *[batch_size, max_length, 1024].*
 # >- <u>lstm_outputs2</u>: t
-# >    - he second LSTM hidden state 
+# >    - the second LSTM hidden state 
+# >    - 双向LSTM中的一个
 # >    - `elmo(tokens, as_dict=True)['lstm_outputs2']`
 # >    - *[batch_size, max_length, 1024].*
 # >- <u>elmo</u>: 
 # >    - the weighted sum of the 3 layers, where the weights are trainable. 
+# >    - 上述三个（word+2*lstm) emb的线性加权组合，针对不同任务时这里的权重（维度为3）可以进行训练，即设置的Trainable
 # >    - `elmo(tokens, as_dict=True)['elmo']`
 # >    - *[batch_size, max_length, 1024]*
 # >- <u>default</u>: 
 # >    - a fixed mean-pooling of all contextualized word representations 
+# >    - 即平均后的句子向量
 # >    - `elmo(tokens, as_dict=True)['default']`
 # >    - *[batch_size, 1024].*
 # 
@@ -119,7 +131,7 @@ emb_opt_tokens = elmo(inputs=input_dict, signature='tokens', as_dict=True)
 # 
 # 如果句子分词后长度都一直，则五种输出结果都一致。
 
-# In[132]:
+# In[12]:
 
 
 with tf.Session() as sess:
@@ -152,6 +164,35 @@ for sen_idx in [0,1]:
         print("不一致时，tokens和sentence两种方式的tensor值示例：")
         emb_tokens[sen_idx]
         emb_sentence[sen_idx]
+
+
+# # 验证
+
+# ## 句子相似度度量
+
+# In[17]:
+
+
+pad_len = 13
+demoSentence_total = ["Modi was appointed Chief Minister of Gujarat in 2001",
+                      "Narendra Modi was appointed Chief Minister of Gujarat in 2001",
+                      "Obama was appointed Chief Minister of Gujarat in 2001"]
+demoSentence_total = [" ".join(ExqUtils.padding(sen.split(" "),pad_len)) for sen in demoSentence_total]
+demoSentence_total
+
+with tf.Session() as sess:
+    emb_opt = elmo(inputs=sentences, as_dict=True)
+    sess.run(tf.global_variables_initializer())
+    emb_demo_opt = tf.reshape(elmo(inputs=demoSentence_total, as_dict=True)['default'],[3,1,1024])
+    emb_demo_total = sess.run(emb_demo_opt)
+
+
+# In[ ]:
+
+
+emb_demo_total = emb_demo_total.reshape(3,1,1024)
+metrics.pairwise.cosine_similarity(emb_demo_total[0],emb_demo_total[1])
+metrics.pairwise.cosine_similarity(emb_demo_total[0],emb_demo_total[2])
 
 
 # In[ ]:
