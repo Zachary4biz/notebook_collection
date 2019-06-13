@@ -533,7 +533,7 @@ init_state = mlstm_cell.zero_state(batch_size, dtype=tf.float32)
 
 # ### mlstm_cell的计算图 | 复用（共享）参数
 
-# #### 方案一 | dynamic_rnn
+# #### ~~方案一 | dynamic_rnn~~
 # time_major的含义
 # - time_major参数针对不同的inputs格式选取不同的值
 # - `inputs` 为 `(batches, steps, inputs)` ==> `time_major=False`
@@ -633,6 +633,57 @@ with tf.Session() as sess:
 # 计算测试数据的准确率
 feed_dict = {_X: mnist.test.images, y: mnist.test.labels, keep_prob: 1.0, batch_size:mnist.test.images.shape[0]}
 print (f"test accuracy {sess.run(accuracy, feed_dict=feed_dict)}")
+
+
+# ## 可视化验证每行输入会如何
+
+# In[ ]:
+
+
+import matplotlib.pyplot as plt
+print(mnist.train.labels[4])
+
+
+# In[ ]:
+
+
+X3 = mnist.train.images[4]
+img3 = X3.reshape([28, 28])
+plt.imshow(img3, cmap='gray')
+plt.show()
+
+
+# In[ ]:
+
+
+X3.shape = [-1, 784]
+y_batch = mnist.train.labels[0]
+y_batch.shape = [-1, class_num]
+
+X3_outputs = np.array(sess.run(outputs, feed_dict={
+            _X: X3, y: y_batch, keep_prob: 1.0, batch_size: 1}))
+print X3_outputs.shape
+X3_outputs.shape = [28, hidden_size]
+print X3_outputs.shape
+
+
+# In[ ]:
+
+
+h_W = sess.run(W, feed_dict={
+            _X:X3, y: y_batch, keep_prob: 1.0, batch_size: 1})
+h_bias = sess.run(bias, feed_dict={
+            _X:X3, y: y_batch, keep_prob: 1.0, batch_size: 1})
+h_bias.shape = [-1, 10]
+
+bar_index = range(class_num)
+for i in xrange(X3_outputs.shape[0]):
+    plt.subplot(7, 4, i+1)
+    X3_h_shate = X3_outputs[i, :].reshape([-1, hidden_size])
+    pro = sess.run(tf.nn.softmax(tf.matmul(X3_h_shate, h_W) + h_bias))
+    plt.bar(bar_index, pro[0], width=0.2 , align='center')
+    plt.axis('off')
+plt.show()
 
 
 # ## 验证、解释一些function
