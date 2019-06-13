@@ -130,6 +130,8 @@ emb_opt_tokens = elmo(inputs=input_dict, signature='tokens', as_dict=True)
 # 不一致的原因实际上是因为句子分词后长度不同，需要用空串padding；
 # 
 # 如果句子分词后长度都一直，则五种输出结果都一致。
+# 
+# batch_size: elmo的inputs是多少个句子； max_length: 每个句子最多多少个词（padding）
 
 # In[12]:
 
@@ -142,7 +144,7 @@ with tf.Session() as sess:
         print(f"signature不同的输入方式(tokens,sentences)，'{output}' 结果是一致的: ",np.all(emb == emb2))
 
 
-# In[148]:
+# In[20]:
 
 
 # 计算好emb
@@ -152,7 +154,7 @@ with tf.Session() as sess:
     emb_sentence = sess.run(emb_opt_sentence['elmo'])
 
 
-# In[167]:
+# In[ ]:
 
 
 print("sentences: ", sentences)
@@ -162,6 +164,7 @@ for sen_idx in [0,1]:
     print("两种输入方式下 elmo 的一致性：",consistent)
     if not consistent:
         print("不一致时，tokens和sentence两种方式的tensor值示例：")
+        emb_tokens[sen_idx].shape
         emb_tokens[sen_idx]
         emb_sentence[sen_idx]
 
@@ -170,7 +173,7 @@ for sen_idx in [0,1]:
 
 # ## 句子相似度度量
 
-# In[17]:
+# In[18]:
 
 
 pad_len = 13
@@ -183,6 +186,7 @@ demoSentence_total
 with tf.Session() as sess:
     emb_opt = elmo(inputs=sentences, as_dict=True)
     sess.run(tf.global_variables_initializer())
+    elmo(inputs=demoSentence_total, as_dict=True)['default'].shape
     emb_demo_opt = tf.reshape(elmo(inputs=demoSentence_total, as_dict=True)['default'],[3,1,1024])
     emb_demo_total = sess.run(emb_demo_opt)
 
