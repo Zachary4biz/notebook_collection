@@ -35,6 +35,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]="-1"
 # - [Tensorflow 官方教程](https://www.tensorflow.org/tutorials/sequences/recurrent?hl=zh-cn)
 
 # # Morvan | Tensorflow
+# - [莫烦 RNN on Tensorflow](https://morvanzhou.github.io/tutorials/machine-learning/tensorflow/5-08-RNN2/#%E5%AE%9A%E4%B9%89-RNN-%E7%9A%84%E4%B8%BB%E4%BD%93%E7%BB%93%E6%9E%84)
 
 # In[3]:
 
