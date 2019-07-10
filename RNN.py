@@ -37,7 +37,7 @@ os.environ["CUDA_VISIBLE_DEVICES"]="-1"
 # # Morvan | Tensorflow
 # - [莫烦 RNN on Tensorflow](https://morvanzhou.github.io/tutorials/machine-learning/tensorflow/5-08-RNN2/#%E5%AE%9A%E4%B9%89-RNN-%E7%9A%84%E4%B8%BB%E4%BD%93%E7%BB%93%E6%9E%84)
 
-# In[3]:
+# In[5]:
 
 
 import tensorflow as tf
@@ -47,7 +47,7 @@ tf.set_random_seed(1)   # set random seed
 
 # ## Data Prepare
 
-# In[3]:
+# In[6]:
 
 
 # 导入数据
@@ -58,7 +58,7 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 
 # ### 超参数
 
-# In[4]:
+# In[7]:
 
 
 # hyperparameters
@@ -73,7 +73,7 @@ n_classes = 10              # MNIST classes (0-9 digits)
 
 # ### RNN建立计算图
 
-# In[5]:
+# In[8]:
 
 
 # x y placeholder
@@ -95,7 +95,7 @@ biases = {
 }
 
 
-# In[7]:
+# In[9]:
 
 
 def RNN(X, weights, biases):
@@ -119,15 +119,16 @@ def RNN(X, weights, biases):
     
     results = tf.matmul(final_state[1], weights['out']) + biases['out']
     return results
+pred = RNN(x, weights, biases)
 
 
 # ## Fit
 
-# In[8]:
+# In[14]:
 
 
-pred = RNN(x, weights, biases)
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y))
+
+cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y,logits=pred))
 train_op = tf.train.AdamOptimizer(lr).minimize(cost)
 correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
 accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
@@ -139,15 +140,12 @@ with tf.Session() as sess:
     while step * batch_size < training_iters:
         batch_xs, batch_ys = mnist.train.next_batch(batch_size)
         batch_xs = batch_xs.reshape([batch_size, n_steps, n_inputs])
-        sess.run([train_op], feed_dict={
+        _ = sess.run([train_op], feed_dict={
             x: batch_xs,
             y: batch_ys,
         })
         if step % 20 == 0:
-            print(sess.run(accuracy, feed_dict={
-            x: batch_xs,
-            y: batch_ys,
-        }))
+            print(sess.run(accuracy, feed_dict={x: batch_xs,y: batch_ys}))
         step += 1
 
 
@@ -468,6 +466,8 @@ with tf.get_default_graph().as_default():
 
 # # Tensorflow 某个博客
 # - [TensorFlow入门（五） 多层LSTM通俗易懂版](https://blog.csdn.net/Jerr__y/article/details/61195257)
+# 多层结构的示意图：
+# ![image.png](attachment:image.png)
 
 # In[4]:
 
@@ -483,7 +483,6 @@ from tensorflow.examples.tutorials.mnist import input_data
 
 
 lr = 1e-3
-batch_size = 128
 input_size = 28 # 每个时刻的输入特征是28维的，就是每个时刻输入一行，一行有 28 个像素
 timestep_size = 28 # 时序持续长度为28，即每做一次预测，需要先输入28行
 hidden_size = 256 # 每个隐含层的节点数
@@ -500,19 +499,22 @@ class_num = 10 # 最后输出分类类别数量，如果是回归预测的话应
 mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 print(mnist.train.images.shape)
 # batch数据（一个iterator或者说generator）
-batch = mnist.train.next_batch(batch_size)
+batch = mnist.train.next_batch(128)
 batch
 
 
 # ## Model
 
+# ### Placeholder
+
 # In[7]:
 
 
-_X = tf.placeholder(tf.float32, [None, 784])
-y = tf.placeholder(tf.float32, [None, class_num])
-keep_prob = tf.placeholder(tf.float32)
-X = tf.reshape(_X,[-1,28,28])
+X_inp = tf.placeholder(tf.float32, [None, 784],name="X_inp")
+y = tf.placeholder(tf.float32, [None, class_num],name="y")
+batch_size = tf.placeholder(tf.int32,[],name="batch_size")
+keep_prob = tf.placeholder(tf.float32,[],name="keep_prob")
+X = tf.reshape(X_inp,[-1,28,28],name="X")
 
 
 # ### 构造多层LSTM及初始化状态
@@ -544,6 +546,10 @@ init_state = mlstm_cell.zero_state(batch_size, dtype=tf.float32)
 #    - 维度是 [batch_size, hidden_size]
 # - `inputs` 为 `(steps, batches, inputs)` ==> `time_major=True`
 # 
+# "Morvan"的例子中给出的解释
+# >如果使用tf.nn.dynamic_rnn(cell, inputs), 我们要确定 inputs 的格式. tf.nn.dynamic_rnn 中的 time_major 参数会针对不同 inputs 格式有不同的值.
+# >- 如果 inputs 为 (batches, steps, inputs) ==> time_major=False;
+# >- 如果 inputs 为 (steps, batches, inputs) ==> time_major=True;
 
 # In[9]:
 
@@ -578,6 +584,7 @@ with tf.variable_scope('RNN'):
         (cell_output, state) = mlstm_cell(X[:, timestep, :], state)
         outputs.append(cell_output)
 h_state = outputs[-1]
+tf.summary.histogram("h_state",h_state)
 
 
 # ### softmax | (256 -> 10)
@@ -593,11 +600,13 @@ h_state = outputs[-1]
 W = tf.Variable(tf.truncated_normal([hidden_size, class_num], stddev=0.1), dtype=tf.float32)
 bias = tf.Variable(tf.constant(0.1,shape=[class_num]), dtype=tf.float32)
 y_pre = tf.nn.softmax(tf.matmul(h_state, W) + bias)
+tf.summary.histogram("softmax_W",W)
+tf.summary.histogram("softmax_bias",bias)
 
 
 # ## loss-func & optimizer
 
-# In[12]:
+# In[14]:
 
 
 # loss
@@ -606,46 +615,52 @@ cross_entropy = -tf.reduce_mean(y * tf.log(y_pre))
 train_op = tf.train.AdamOptimizer(lr).minimize(cross_entropy)
 # eval
 correct_prediction = tf.equal(tf.argmax(y_pre,1), tf.argmax(y,1))
-accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float")) # bool cast float得到0，1；取均值则为100个样本中有90个预测正确
+accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float")) # 映射 bool -> float即T/F到1.0/0.0；取均值则为100个样本中有90个预测正确
+tf.summary.scalar("acc",accuracy)
 
 
 # ## Run fit
 
-# In[13]:
+# In[16]:
 
 
-with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    for i in range(2000):
-        (train_data,train_label) = mnist.train.next_batch(batch_size)
-        if (i+1)%200 == 0:
-            feed_dict = {_X:batchtrain_data, y: train_label, keep_prob: 1.0}
-            train_accuracy = sess.run(accuracy, feed_dict=feed_dict)
-            # 已经迭代完成的 epoch 数: mnist.train.epochs_completed
-            print (f"Iter {mnist.train.epochs_completed}, step {(i+1)}, training accuracy {train_accuracy}")
-        sess.run(train_op, feed_dict={_X: batch[0], y: batch[1], keep_prob: 0.5})
-
-
-# ## Eval
-
-# In[ ]:
-
-
-# 计算测试数据的准确率
-feed_dict = {_X: mnist.test.images, y: mnist.test.labels, keep_prob: 1.0, batch_size:mnist.test.images.shape[0]}
-print (f"test accuracy {sess.run(accuracy, feed_dict=feed_dict)}")
+merged_opt = tf.summary.merge_all()
+train_writer = tf.summary.FileWriter("./TensorBoards/RNN/logs_20190618/train",tf.get_default_graph())
+test_writer = tf.summary.FileWriter("./TensorBoards/RNN/logs_20190618/test",tf.get_default_graph())
+# train_writer.add_graph(tf.get_default_graph())
+# test_writer.add_graph(tf.get_default_graph())
+train_batch_size = 128
+feed_dict_test = {X_inp: mnist.test.images, y: mnist.test.labels, keep_prob: 1.0, batch_size:mnist.test.images.shape[0]}
+sess = tf.Session()
+sess.run(tf.global_variables_initializer())
+print("init finished.")
+for i in range(2000):
+    (train_data,train_label) = mnist.train.next_batch(train_batch_size)
+    feed_dict_train = {X_inp:train_data, y: train_label, keep_prob: 0.5, batch_size:train_batch_size}
+    if (i+1)%200 == 0: # once each 200
+        # acc of train
+        feed_dict_train_acc = feed_dict_train.copy()
+        feed_dict_train_acc.update({keep_prob: 1.0})
+        train_summary,train_acc = sess.run([merged_opt,accuracy], feed_dict=feed_dict_train_acc)
+        train_writer.add_summary(train_summary,i)
+        test_summary,test_acc = sess.run([merged_opt,accuracy], feed_dict=feed_dict_test)
+        test_writer.add_summary(test_summary,i)
+        print (f"epoch: {mnist.train.epochs_completed}, step: {(i+1)}, train acc: {train_acc}, test_acc: {test_acc} ")
+    summary,_ = sess.run([merged_opt,train_op], feed_dict=feed_dict_train)
+    train_writer.add_summary(summary,i)
+print (f"test accuracy {sess.run(accuracy, feed_dict=feed_dict_test)}")
 
 
 # ## 可视化验证每行输入会如何
 
-# In[ ]:
+# In[18]:
 
 
 import matplotlib.pyplot as plt
 print(mnist.train.labels[4])
 
 
-# In[ ]:
+# In[19]:
 
 
 X3 = mnist.train.images[4]
@@ -654,7 +669,7 @@ plt.imshow(img3, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[20]:
 
 
 X3.shape = [-1, 784]
@@ -662,10 +677,10 @@ y_batch = mnist.train.labels[0]
 y_batch.shape = [-1, class_num]
 
 X3_outputs = np.array(sess.run(outputs, feed_dict={
-            _X: X3, y: y_batch, keep_prob: 1.0, batch_size: 1}))
-print X3_outputs.shape
+            X_inp: X3, y: y_batch, keep_prob: 1.0, batch_size: 1}))
+print(X3_outputs.shape)
 X3_outputs.shape = [28, hidden_size]
-print X3_outputs.shape
+print(X3_outputs.shape)
 
 
 # In[ ]:
@@ -687,9 +702,9 @@ for i in xrange(X3_outputs.shape[0]):
 plt.show()
 
 
-# ## 验证、解释一些function
+# # 验证、解释一些function
 
-# ### 变量说明
+# ## 变量说明
 # | var | shape | example | info |
 # | :---- | :---- | :--- | :---- |
 # | X | (batch_size, timestep_size, input_size) | (128, 28, 28) |
@@ -701,13 +716,44 @@ plt.show()
 # | bias | (class_num) | (10) | softmax的bias |
 # | y_pre | (batch_size, class_num) | (128, 10) |
 
-# ###  一些报错的原因及解决
+# ##  一些报错的原因及解决
+# ### MultiRNNCell
 # > WARNING:tensorflow:At least two cells provided to MultiRNNCell are the same object and will share weights.
+# 
+# CODE: `mlstm_cell = tf.contrib.rnn.MultiRNNCell([make_cell(hidden_size)] * layer_num, state_is_tuple=True)`
 # 
 # 因为使用了 `[cell]*3` 来构造多层LSTM，这个方法实际上这3层LSTM都用的是同一个对象`cell`，所以权重也都是相同的
 # 
 # 正确写法是`[cell for _ in range(3)]`
 # 
+# ### Case1: dynamic_rnn (with a fixed batch_size=128)
+# > ValueError: Input tensor 'MultiRNNCellZeroState/DropoutWrapperZeroState/LSTMBlockCellZeroState/zeros:0' enters the loop with shape (128, 256), but has shape (?, 256) after one iteration. To allow the shape to vary across iterations, use the `shape_invariants` argument of tf.while_loop to specify a less-specific shape.
+# 
+# CODE: `outputs, final_state = tf.nn.dynamic_rnn(mlstm_cell, inputs=X, initial_state=init_state, time_major=False)`
+# 
+# ### Case2: when do predict (with a fixed batch_size=128)
+# >InvalidArgumentError: cs_prev.dims(0) != batch_size: 128 vs. 10000
+# 
+# CODE: `sess.run(accuracy, feed_dict=feed_dict_test)`
+# 
+# 以上两个Case都是因为`batch_size`不能是固定的，改用一个`placeholder`传入它
+# - 参考[github的一个issue](https://github.com/tensorflow/tensorflow/issues/15737)
+# 
+# ### mnist.train.next_batch (with batch_size as placeholder)
+# > TypeError: Using a `tf.Tensor` as a Python `bool` is not allowed.
+# 
+# CODE: `(train_data,train_label) = mnist.train.next_batch(batch_size)`
+# 
+# 原因是tf加载mnist数据的内部python使用了形如 `start + batch_size > self.num` 的形式
+# 
+# 暂时解决：直接将获取`next_batch`的`batch_size`设定为固定值，注意在`feed_dict`中也要给`batch_size`填这个值才行，如下
+# ```
+# train_batch_size = 128
+# (train_data,train_label) = mnist.train.next_batch(train_batch_size)
+# feed_dict_train = {_X:train_data, y: train_label, keep_prob: 1.0, batch_size:train_batch_size}
+# ```
+
+# ## Tensorflow API解释
 
 # ### tf.stack
 # - stack要求两个tensor维度必须是相同的，本来是 $[D_1,D_2,..D_n]$ 的共n个维度的俩tensor，stack后变成n+1个维度，多+1的那个维度为`2`，具体这个+1的维度`2`放在哪就由`axis=`决定，`axis=0`那这个`2`就放在索引0上
@@ -835,7 +881,28 @@ with tf.Session() as sess:
     sess.run(tf.to_float(random_op,tf.int32))
 
 
-# ### reuse_variables | 为什么RNN scope的循环内每次（timestep>0后）都要设置一下reuse_variables
+# ### tf.while_loop
+
+# In[17]:
+
+
+i  = 0
+n =10 
+
+def cond(i, n):
+    return i < n
+
+def body(i, n):
+    i = i + 1
+    return i, n
+i, n = tf.while_loop(cond, body, [i, n])
+
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    sess.run([i,n])
+
+
+# ## reuse_variables | 为什么RNN scope的循环内每次（timestep>0后）都要设置一下reuse_variables
 
 # In[39]:
 
@@ -873,9 +940,9 @@ with tf.variable_scope('RNN_test'):
         
 
 
-# ### mnist.train.next_batch
+# ## mnist.train.next_batch
 
-# In[29]:
+# In[24]:
 
 
 # next_batch 的用法
@@ -887,8 +954,18 @@ batch[0][:2].shape # data of 2 samples
 len(data)
 len(label)
 
+mnist.train.next_batch(10)[0].shape
+mnist.train.next_batch(10)[1].shape
 
-# ### X的shape
+print("train_data&train_label.shape")
+train_data.shape
+train_label.shape
+print("mnist.text.images&labels.shape")
+mnist.test.images.shape
+mnist.test.labels.shape
+
+
+# ## X的shape
 
 # In[19]:
 
@@ -900,7 +977,7 @@ with tf.Session() as sess:
     res[:,0,:]
 
 
-# ### state的shape
+# ## state的shape
 # `lstm`的`state`可以被分为`(c_state, h_state)`各是`[batch_size,hidden_size]`维度
 
 # In[31]:
@@ -916,7 +993,7 @@ with tf.Session() as sess:
     res_state[1].h
 
 
-# ### X[:, timestep, :] 是什么效果
+# ## X[:, timestep, :] 是什么效果
 
 # In[48]:
 
