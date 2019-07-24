@@ -291,6 +291,8 @@ for epoch in range(EPOCH):
             print('Epoch: ', epoch, '| train loss: %.4f' % loss.data.numpy(), '| test accuracy: %.2f' % accuracy)
 
 
+# ## Predict
+
 # In[37]:
 
 
@@ -755,6 +757,15 @@ plt.show()
 
 # ## Tensorflow API解释
 
+# In[4]:
+
+
+import tensorflow as tf
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+get_ipython().run_line_magic('matplotlib', 'inline')
+
+
 # ### tf.stack
 # - stack要求两个tensor维度必须是相同的，本来是 $[D_1,D_2,..D_n]$ 的共n个维度的俩tensor，stack后变成n+1个维度，多+1的那个维度为`2`，具体这个+1的维度`2`放在哪就由`axis=`决定，`axis=0`那这个`2`就放在索引0上
 # 
@@ -812,18 +823,23 @@ tf.unstack(m,axis=3)
 # - name：自定义操作名。 
 # - ~~reduction_indices：axis的旧名，已停用。~~
 
-# In[56]:
+# In[1]:
 
 
 np.random.seed(2019)
 a = np.random.randint(0,10,size=[2,3])
-# a = tf.Variable(a)
-a
+"a",a
+a_var = tf.Variable(a)
+a_var.shape
 a.shape
+tf.reduce_mean(a,axis=None).shape
+tf.reduce_mean(a,axis=0).shape
 with tf.Session() as sess:
     sess.run(tf.reduce_sum(a,axis=None))
     sess.run(tf.reduce_mean(a,axis=None))
+    sess.run(tf.reduce_mean(a,axis=None)).shape
     sess.run(tf.reduce_mean(a,axis=0))
+    sess.run(tf.reduce_mean(a,axis=0)).shape
 
 
 # ### tf.transpose
