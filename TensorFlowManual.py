@@ -276,6 +276,17 @@ with tf.Session() as sess:
     sess.run(tensor)
 
 
+# ## tf.nn.zero_fraction
+# 计算为0的比例
+
+# In[189]:
+
+
+with tf.Session() as sess:
+    tf.nn.zero_fraction([1,1,1,0]).eval()
+    tf.nn.zero_fraction([1,1,0,0]).eval()
+
+
 # ## tf.nn.embedding_lookup
 # ```python
 # tf.nn.embedding_lookup(
@@ -437,45 +448,227 @@ with tf.Session() as sess:
     tf.nn.softmax(a).eval()
 
 
+# In[173]:
+
+
+sigmoid(1)
+sigmoid(0)
+
+
 # ## cross_entropy
-# 参考这篇[博客Tensorflow损失函数详解](https://sthsf.github.io/wiki/Algorithm/DeepLearning/Tensorflow%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/Tensorflow%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86---%E6%8D%9F%E5%A4%B1%E5%87%BD%E6%95%B0%E8%AF%A6%E8%A7%A3.html)
+# **「注」：** tf的这批API，都是在内部做了sigmoid
+# - 测试用例是 `labels=[1,1,0,1],logits=[1,1,0,1]`
+#     - 内部是对`loigts`做了个`sigmoid`，即真正计算的是 `[1,1,0,1]` 和 `[0.731,0.731,0.5,0.731]`之间的CE**
+#     - `sigmoid(1)=0.731, sigmoid(0)=0.5`
+#     
+# 
+# 一些参考
+# - 参考这篇[博客Tensorflow损失函数详解](https://sthsf.github.io/wiki/Algorithm/DeepLearning/Tensorflow%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/Tensorflow%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86---%E6%8D%9F%E5%A4%B1%E5%87%BD%E6%95%B0%E8%AF%A6%E8%A7%A3.html)
+# 
+# - 这篇[简书文章](https://www.jianshu.com/p/cf235861311b)结构更清晰
+# 
+# - CE公式
+#     - $H(X=x)=-\sum_x p(x)logq(x)$
+# 
+# - logloss
+#     - $logloss = - \sum_{i=1}^n(\frac{\hat{y_i}}{n}log(y_{pred})+\frac{1-\hat{y_i}}{n}log(1-y_{pred}))$
+# 
+# - 单看一条样本的logloss
+#     - $logloss = ylog(\hat{y}) + (1-y)log(1-\hat{y})$
+# 
+
+# In[175]:
+
+
+class Data():
+    # 每一行可有多个1,如一张图既有 label_桌子 又有 label_椅子
+    multi_hot_labels=np.array([[1,0,0],
+                               [0,1,0],
+                               [0,0,1],
+                               [1,1,0],
+                               [0,1,0]],dtype=np.float32)
+    
+    # 每一行只有一个1,如一张图只能有 label_桌子 不能有 label_椅子
+    one_hot_labels=np.array([[1,0,0],
+                             [0,1,0],
+                             [0,0,1],
+                             [1,0,0],
+                             [0,1,0]],dtype=np.float32)
+    
+
+    logits=np.array([[12,3,2],
+                     [3,10,1],
+                     [1,2,5],
+                     [4,6.5,1.2],
+                     [3,6,1]],dtype=np.float32)
+    
+    
+Data.multi_hot_labels
+Data.one_hot_labels
+Data.logits
+
+
+# ### 如下是tensorflow计算CE的公式化简
+# 
+# 「注」：这里已经把`sigmoid`考虑进去了，所以输入的时候`pred`就不要进行`sigmoid`了
+# - For brevity, let x = logits, z = labels. The logistic loss is
+# ```python
+# z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+# = z * -log(1 / (1 + exp(-x))) + (1 - z) * -log(exp(-x) / (1 + exp(-x)))
+# = z * log(1 + exp(-x)) + (1 - z) * (-log(exp(-x)) + log(1 + exp(-x)))
+# = z * log(1 + exp(-x)) + (1 - z) * (x + log(1 + exp(-x))
+# = (1 - z) * x + log(1 + exp(-x))
+# = x - x * z + log(1 + exp(-x))
+# ```
+# - For x < 0, to avoid overflow in exp(-x), we reformulate the above
+# ```python
+# x - x * z + log(1 + exp(-x))
+# = log(exp(x)) - x * z + log(1 + exp(-x))
+# = - x * z + log(1 + exp(x))              
+# ```
+# - Hence, to ensure stability and avoid overflow, the implementation uses this equivalent formulation
+# ```python
+# max(x, 0) - x * z + log(1 + exp(-abs(x)))
+# ```
+
+# In[156]:
+
+
+from math import log,exp
+def sigmoid(x):
+    return 1/(1+np.exp(-x))
+
+# 完全直接的CE，输入的是label和外部做好sigmoid的prediction
+def exact_ce(pred,label):
+    return -label*np.log(y_pred)-(1-label)*np.log(1-y_pred)
+
+# tf化简公式（内部做了sigmoid，已化简掉了）
+def ce_as_tf(pred,label):
+    return max(pred, 0) - pred * label + log(1 + exp(-abs(pred)))
+
+# 按计算公式计算（内部做了sigmoid）
+def manual_formula(pred,label):
+    y_pred = sigmoid(pred)
+    E1 = -label*np.log(y_pred)-(1-label)*np.log(1-y_pred)
+    return E1
+
+ce_as_tf(1,1)
+manual_formula(0.7,0.7) == ce_as_tf(0.7,0.7)
+
+
 # ### tf.nn.sigmoid_cross_entropy_with_logits
 # - 这个函数的输入是logits和labels，logits就是神经网络模型中的 W * X矩阵，注意**不需要经过sigmoid**
+# - 可用于各类别独立但不排斥的情况：如图片可以既有桌子又有凳子
 # 
+
+# In[169]:
+
+
+# 5个样本三分类问题，且一个样本可以同时拥有多类
+print(manual_formula(pred=Data.logits,label=Data.multi_hot_labels))     # 按计算公式计算的结果
+
+with tf.Session() as sess:
+    tf.nn.sigmoid_cross_entropy_with_logits(logits=Data.logits,labels=Data.multi_hot_labels).eval()
+    tf.nn.sigmoid_cross_entropy_with_logits(logits=Data.logits,labels=Data.one_hot_labels).eval()
+
+
 # ### tf.nn.weighted_cross_entropy_with_logits
 # - 是`sigmoid_cross_entropy_with_logits`的拓展版，多支持一个`pos_weight`参数，在传统基于sigmoid的交叉熵算法上，**正样本算出的值乘以某个系数。**
 # 
+# ```python
+# tf.nn.weighted_cross_entropy_with_logits(
+#     labels=None,
+#     logits=None,
+#     pos_weight=None,
+#     name=None,
+#     targets=None
+# )
+# ```
+
+# In[171]:
+
+
+# pos_weight = np.ones_like(logits.shape[0])
+pos_weight = np.zeros_like(Data.logits.shape[0]) # 权重统一为0
+with tf.Session() as sess:
+    tf.nn.weighted_cross_entropy_with_logits(Data.multi_hot_labels,Data.logits, pos_weight, name=None).eval()
+    tf.nn.weighted_cross_entropy_with_logits(Data.one_hot_labels,Data.logits, pos_weight, name=None).eval()
+
+
 # ### ~~tf.nn.softmax_cross_entropy_with_logits~~ (Deprecated)
 # ### tf.nn.softmax_cross_entropy_with_logits_v2
 # - 为了效率此函数内部执行softmax，输入logits时不要计算softmax
 # - While the **classes are mutually exclusive**, their probabilities need not be. All that is required is that **each row of labels is a valid probability distribution**
 # - Note that to avoid confusion, it is required to pass only named arguments to this function.
 # 
-# 
-# ### tf.nn.sparse_softmax_cross_entropy_with_logits
-# 
 
-# In[113]:
+# In[174]:
 
 
-logits=[0.0, 0.5, 1.0]
-labels=[0.0, 1.0, 0.0]
-logits=tf.convert_to_tensor(logits)
-labels=tf.convert_to_tensor(labels)
 with tf.Session() as sess:
-    tf.nn.sigmoid_cross_entropy_with_logits(logits=logits,labels=labels).eval()
+    tf.nn.softmax_cross_entropy_with_logits_v2(labels=Data.multi_hot_labels,logits=Data.logits).eval()
+    tf.nn.softmax_cross_entropy_with_logits_v2(labels=Data.one_hot_labels,logits=Data.logits).eval()
 
 
-# In[ ]:
+# ### tf.nn.sparse_softmax_cross_entropy_with_logits
+# 注意labels和logits的shape
+# - labels是第几类的索引
+# ```python
+#    [2,
+#     1,
+#     1,
+#     2]
+# ```
+# - logits是
+# ```python
+#     [[ 12, 4,   4, 22],
+#      [6.5, 2, 3.3,  7],
+#      [2.5, 9, 8.3,6.7],]
+# ```
+# >如果两个都是Rank1会报错： Rank of labels (received 1) should equal rank of logits minus 1 (received 1)
+# 
+# ```python
+# tf.nn.sparse_softmax_cross_entropy_with_logits(
+#     _sentinel=None,
+#     labels=None,
+#     logits=None,
+#     name=None
+# )
+# ```
+
+# In[185]:
 
 
+# Data.multi_hot_labels
+# tf.argmax(Data.multi_hot_labels,axis=-1).eval() # multi_hot（支持一图多类）的label做aargmax也没有意义
+Data.one_hot_labels
+Data.logits
+label_rank1 = tf.argmax(Data.one_hot_labels,axis=-1)
+logits_rank1 = tf.argmax(Data.logits,axis=-1)
+with tf.Session() as sess:
+    label_rank1.eval()
+    logits_rank1.eval()
+    tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_rank1,logits=Data.logits).eval()
+#     tf.nn.sparse_softmax_cross_entropy_with_logits(labels=,logits=Data.logits).eval()
 
 
+# ### 对比
 
-# In[ ]:
+# In[187]:
 
 
+with tf.Session() as sess:
+    # softmax
+    label_rank1=tf.argmax(Data.one_hot_labels,axis=-1)
+    tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_rank1,logits=Data.logits).eval()
+    
+    tf.nn.softmax_cross_entropy_with_logits_v2(labels=Data.one_hot_labels,logits=Data.logits).eval()
+    
+    # sigmoid
+    tf.nn.sigmoid_cross_entropy_with_logits(logits=Data.logits,labels=Data.one_hot_labels).eval()
 
+    pos_weight=np.ones_like(Data.logits.shape[0]) # 权重统一为1
+    tf.nn.weighted_cross_entropy_with_logits(Data.one_hot_labels,Data.logits, pos_weight, name=None).eval()
 
 
 # In[ ]:

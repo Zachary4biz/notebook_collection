@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[11]:
+# In[1]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
@@ -14,7 +14,7 @@ import copy,os,sys,psutil
 from collections import Counter
 
 
-# In[12]:
+# In[2]:
 
 
 import tensorflow as tf
@@ -37,7 +37,7 @@ import re
 
 # # Config
 
-# In[6]:
+# In[3]:
 
 
 class TrainingConfig(object):
@@ -56,19 +56,23 @@ class ModelConfig(object):
     l2RegLambda = 0.0
 
 class Config(object):
-    batchSize = 128
-    pad_size = 1024
-    pad = '<PAD>'
-    unk = '<UNK>'
-
     _job = "taste"
     _basePath = "/home/zhoutong/nlp/data"
     dataSource = _basePath + "/labeled_{}_train.json".format(_job)
-    dataSource = dataSource+".sample_h10k"
+    dataSource = dataSource + ".sample_h10k"
     testSource = _basePath + "/labeled_{}_test.json".format(_job)
 
-    weFilePath = _basePath+"/wordEmbeddingInfo" # \t分割 词,idx,embedding
-    ft_modelPath = _basePath+'/cc.en.300.bin'
+    weDim = 300
+    weFilePath = _basePath + "/wordEmbeddingInfo"  # \t分割 词,idx,embedding
+    ft_modelPath = _basePath + '/cc.en.300.bin'
+
+    batchSize = 128
+    pad_size = 1024
+    pad = '<PAD>'
+    pad_initV = np.zeros(weDim)
+    unk = '<UNK>'
+    unk_initV = np.random.randn(weDim)
+
 
     numClasses = 1  # 二分类设置为1，多分类设置为类别的数目
 
@@ -99,7 +103,7 @@ config = Config()
 
 # # TextCNN
 
-# In[7]:
+# In[4]:
 
 
 class TextCNN(object):
@@ -110,7 +114,7 @@ class TextCNN(object):
     def __init__(self, config, wordEmbedding):
 
         # 定义模型的输入
-        self.inputX = tf.placeholder(tf.int32, [None, config.sequenceLength], name="inputX")
+        self.inputX = tf.placeholder(tf.int32, [None, config.pad_size], name="inputX")
         self.inputY = tf.placeholder(tf.int32, [None], name="inputY")
 
         self.dropoutKeepProb = tf.placeholder(tf.float32, name="dropoutKeepProb")
@@ -120,7 +124,6 @@ class TextCNN(object):
 
         # 词嵌入层
         with tf.name_scope("embedding"):
-
             # 利用预训练的词向量初始化词嵌入矩阵
             self.W = tf.Variable(tf.cast(wordEmbedding, dtype=tf.float32, name="word2vec"), name="W")
             # 利用词嵌入矩阵将输入的数据中的词转换成词向量，维度[batch_size, sequence_length, embedding_size]
@@ -130,7 +133,7 @@ class TextCNN(object):
 
         # 创建卷积和池化层
         pooledOutputs = []
-        # 有三种size的filter，3， 4， 5，textCNN是个多通道单层卷积的模型，可以看作三个单层的卷积模型的融合
+        # 有三种size的filter，2, 3， 4， 5，textCNN是个多通道单层卷积的模型，可以看作三个单层的卷积模型的融合
         for i, filterSize in enumerate(config.model.filterSizes):
             with tf.name_scope("conv-maxpool-%s" % filterSize):
                 # 卷积层，卷积核尺寸为filterSize * embeddingSize，卷积核的个数为numFilters
@@ -138,20 +141,20 @@ class TextCNN(object):
                 filterShape = [filterSize, config.model.embeddingSize, 1, config.model.numFilters]
                 W = tf.Variable(tf.truncated_normal(filterShape, stddev=0.1), name="W")
                 b = tf.Variable(tf.constant(0.1, shape=[config.model.numFilters]), name="b")
-                conv = tf.nn.conv2d(
-                    self.embeddedWordsExpanded,
-                    W,
+                convRes = tf.nn.conv2d(
+                    inpput=self.embeddedWordsExpanded,
+                    filter=W,
                     strides=[1, 1, 1, 1],
                     padding="VALID",
                     name="conv")
 
                 # relu函数的非线性映射
-                h = tf.nn.relu(tf.nn.bias_add(conv, b), name="relu")
+                h = tf.nn.relu(tf.nn.bias_add(convRes, b), name="relu")
 
                 # 池化层，最大池化，池化是对卷积后的序列取一个最大值
                 pooled = tf.nn.max_pool(
                     h,
-                    ksize=[1, config.sequenceLength - filterSize + 1, 1, 1],
+                    ksize=[1, config.pad_size - filterSize + 1, 1, 1],
                     # ksize shape: [batch, height, width, channels]
                     strides=[1, 1, 1, 1],
                     padding='VALID',
@@ -201,9 +204,182 @@ class TextCNN(object):
             self.loss = tf.reduce_mean(losses) + config.model.l2RegLambda * l2Loss
 
 
+# In[5]:
+
+
+class MetricUtils():
+    """
+    定义各类性能指标
+    """
+    @staticmethod
+    def mean(item: list) -> float:
+        """
+        计算列表中元素的平均值
+        :param item: 列表对象
+        :return:
+        """
+        res = sum(item) / len(item) if len(item) > 0 else 0
+        return res
+
+    @staticmethod
+    def accuracy(pred_y, true_y):
+        """
+        计算二类和多类的准确率
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :return:
+        """
+        if isinstance(pred_y[0], list):
+            pred_y = [item[0] for item in pred_y]
+        corr = 0
+        for i in range(len(pred_y)):
+            if pred_y[i] == true_y[i]:
+                corr += 1
+        acc = corr / len(pred_y) if len(pred_y) > 0 else 0
+        return acc
+
+    @staticmethod
+    def binary_precision(pred_y, true_y, positive=1):
+        """
+        二类的精确率计算
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param positive: 正例的索引表示
+        :return:
+        """
+        corr = 0
+        pred_corr = 0
+        for i in range(len(pred_y)):
+            if pred_y[i] == positive:
+                pred_corr += 1
+                if pred_y[i] == true_y[i]:
+                    corr += 1
+
+        prec = corr / pred_corr if pred_corr > 0 else 0
+        return prec
+
+    @staticmethod
+    def binary_recall(pred_y, true_y, positive=1):
+        """
+        二类的召回率
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param positive: 正例的索引表示
+        :return:
+        """
+        corr = 0
+        true_corr = 0
+        for i in range(len(pred_y)):
+            if true_y[i] == positive:
+                true_corr += 1
+                if pred_y[i] == true_y[i]:
+                    corr += 1
+
+        rec = corr / true_corr if true_corr > 0 else 0
+        return rec
+
+    @staticmethod
+    def binary_f_beta(pred_y, true_y, beta=1.0, positive=1):
+        """
+        二类的f beta值
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param beta: beta值
+        :param positive: 正例的索引表示
+        :return:
+        """
+        precision = MetricUtils.binary_precision(pred_y, true_y, positive)
+        recall = MetricUtils.binary_recall(pred_y, true_y, positive)
+        try:
+            f_b = (1 + beta * beta) * precision * recall / (beta * beta * precision + recall)
+        except:
+            f_b = 0
+        return f_b
+
+    @staticmethod
+    def multi_precision(pred_y, true_y, labels):
+        """
+        多类的精确率
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param labels: 标签列表
+        :return:
+        """
+        if isinstance(pred_y[0], list):
+            pred_y = [item[0] for item in pred_y]
+
+        precisions = [MetricUtils.binary_precision(pred_y, true_y, label) for label in labels]
+        prec = MetricUtils.mean(precisions)
+        return prec
+
+    @staticmethod
+    def multi_recall(pred_y, true_y, labels):
+        """
+        多类的召回率
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param labels: 标签列表
+        :return:
+        """
+        if isinstance(pred_y[0], list):
+            pred_y = [item[0] for item in pred_y]
+
+        recalls = [MetricUtils.binary_recall(pred_y, true_y, label) for label in labels]
+        rec = MetricUtils.mean(recalls)
+        return rec
+
+    @staticmethod
+    def multi_f_beta(pred_y, true_y, labels, beta=1.0):
+        """
+        多类的f beta值
+        :param pred_y: 预测结果
+        :param true_y: 真实结果
+        :param labels: 标签列表
+        :param beta: beta值
+        :return:
+        """
+        if isinstance(pred_y[0], list):
+            pred_y = [item[0] for item in pred_y]
+
+        f_betas = [MetricUtils.binary_f_beta(pred_y, true_y, beta, label) for label in labels]
+        f_beta = MetricUtils.mean(f_betas)
+        return f_beta
+
+    @staticmethod
+    def get_binary_metrics(pred_y, true_y, f_beta=1.0):
+        """
+        得到二分类的性能指标
+        :param pred_y:
+        :param true_y:
+        :param f_beta:
+        :return:
+        """
+        acc = MetricUtils.accuracy(pred_y, true_y)
+        recall = MetricUtils.binary_recall(pred_y, true_y)
+        precision = MetricUtils.binary_precision(pred_y, true_y)
+        f_beta = MetricUtils.binary_f_beta(pred_y, true_y, f_beta)
+        return acc, recall, precision, f_beta
+
+    @staticmethod
+    def get_multi_metrics(pred_y, true_y, labels, f_beta=1.0):
+        """
+        得到多分类的性能指标
+        :param pred_y:
+        :param true_y:
+        :param labels:
+        :param f_beta:
+        :return:
+        """
+        acc = MetricUtils.accuracy(pred_y, true_y)
+        recall = MetricUtils.multi_recall(pred_y, true_y, labels)
+        precision = MetricUtils.multi_precision(pred_y, true_y, labels)
+        f_beta = MetricUtils.multi_f_beta(pred_y, true_y, labels, f_beta)
+        return acc, recall, precision, f_beta
+
+
 # # Class Dataset
 
-# In[26]:
+# In[11]:
 
 
 class Dataset(object):
@@ -235,7 +411,7 @@ class Dataset(object):
         zprint("loading data from: "+filePath)
         for l in tqdm(f_iter):
             text,label = l.strip().split("__label__")
-            tokens = Utils.pad_list(Utils.clean_punctuation(text).split(" "),width=config.pad_size,pad_const=config.pad)
+            tokens = Utils.pad_list(Utils.clean_punctuation(text).split(" "),width=self.config.pad_size,pad_const=self.config.pad)
             tokens_list.append(tokens)
             label_list.append(label)
         return np.array(tokens_list), np.array(label_list).reshape(-1,1)
@@ -264,9 +440,17 @@ class Dataset(object):
         tokensSet = set(t for tokens in tokens_arr for t in tokens)
         zprint("预测词向量存入文件: {}".format(self._we_fp))
         with open(self._we_fp,"w") as fw:
+            # 加上 <PAD> 和 <UNK> 及其初始化
             for idx,token in tqdm(enumerate(tokensSet),total=len(tokensSet)):
-                emb = self.ft_model[token]
-                fw.writelines(str(idx)+"\t"+token+",".join([str(i) for i in list(emb)])+"\n")
+                if token == self.config.pad:
+                    emb = self.config.pad_initV
+                elif token == self.config.unk:
+                    emb = self.config.unk_initV
+                else:
+                    emb = self.ft_model[token]
+                fw.writelines(str(idx)+"\t"+token+"\t"+",".join([str(i) for i in list(emb)])+"\n")
+
+
         self.totalWordCnt = len(tokensSet)
 
 
@@ -283,7 +467,7 @@ class Dataset(object):
 
 # # Produce Data
 
-# In[28]:
+# In[12]:
 
 
 data = Dataset(config)
@@ -294,7 +478,21 @@ print("eval data shape: {}".format(data.evalReviews.shape))
 print("wordEmbedding info file: {}".format(data._we_fp))
 
 
-# In[29]:
+# In[15]:
+
+
+tokens_arr, label_arr = data._readData(data._dataSource)
+
+
+# In[18]:
+
+
+tokens_arr
+set(np.unique(tokens_arr))
+set(np.unique(trainLabels))
+
+
+# In[8]:
 
 
 trainReviews = data.trainReviews
@@ -303,9 +501,16 @@ evalReviews = data.evalReviews
 evalLabels = data.evalLabels
 
 
+# In[14]:
+
+
+trainReviews
+trainLabels
+
+
 # # 开始构建计算图
 
-# In[ ]:
+# In[31]:
 
 
 def nextBatch(x, y, batchSize):
