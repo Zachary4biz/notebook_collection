@@ -382,6 +382,7 @@ with tf.Session() as sess:
 # >- Extracts image patches from the input tensor to form a virtual tensor of shape:
 # >    - [`batch`, out_height, out_width, **filter_height** * **filter_width** * **in_channels**].
 # >- For each patch, right-multiplies the filter matrix and the image patch vector.
+# 
 
 # In[ ]:
 
