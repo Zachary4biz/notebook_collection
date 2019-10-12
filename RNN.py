@@ -520,6 +520,8 @@ X = tf.reshape(X_inp,[-1,28,28],name="X")
 
 
 # ### 构造多层LSTM及初始化状态
+# 多层LSTM的示意图（怎么个多层法）
+# ![image.png](attachment:image.png)
 
 # In[8]:
 
@@ -571,7 +573,7 @@ outputs, final_state = tf.nn.dynamic_rnn(mlstm_cell, inputs=X, initial_state=ini
 # ** 或者，可以取 h_state = state[-1][1] 作为最后输出
 # ** 最后输出维度是 [batch_size, hidden_size]
 # outputs, state = tf.nn.dynamic_rnn(mlstm_cell, inputs=X, initial_state=init_state, time_major=False)
-# h_state = outputs[:, -1, :]  # 或者 h_state = state[-1][1]
+# h_state = outputs[:, -1, :]  # 或者 h_state = state[-1][1] state[-1]是最后一层LSTMCell-layer,[1]是h_state. [0]是c_state
 
 # *************** 为了更好的理解 LSTM 工作原理，我们把上面 步骤6 中的函数自己来实现 ***************
 # 通过查看文档你会发现， RNNCell 都提供了一个 __call__()函数（见最后附），我们可以用它来展开实现LSTM按时间步迭代。
@@ -1020,6 +1022,7 @@ test.shape
 test
 test[:,0,:]
 test[:,1,:]
+test[:,-1,:]
 
 
 # In[ ]:
