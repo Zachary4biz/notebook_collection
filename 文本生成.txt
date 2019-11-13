@@ -1,0 +1,323 @@
+
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+%matplotlib inline
+from tqdm.auto import tqdm
+import concurrent.futures
+from multiprocessing import Pool
+import copy,os,sys,psutil
+from collections import Counter,deque
+
+import tensorflow as tf
+import numpy as np
+import json
+import re
+import itertools
+import pickle
+
+# data_name = "labeled_timeliness_region_taste_emotion_sample.json.bak.head1k"
+data_name = "labeled_timeliness_region_taste_emotion_sample.json.bak"
+fp = "/home/zhoutong/NLP/data/{}".format(data_name)
+result_set_fp = "/home/zhoutong/NLP/data/{}_word2idx".format(data_name)
+coded_article_fp = "/home/zhoutong/NLP/data/{}_coded_article.pkl".format(data_name)
+
+"fp: ",fp
+"result_set_fp: ", result_set_fp
+"coded_article_fp: ", coded_article_fp
+
+def load_f(fp_inp):
+    with open(fp_inp,"r") as f:
+        for line in f:
+            title = json.loads(line)['title']
+            text = json.loads(line)['text']
+            text = re.sub("[\\n]+", "\\n",text)
+            yield text
+
+def load_f(fp_inp):
+    with open(fp_inp,"r") as f:
+        for line in f:
+            title = json.loads(line)['title']
+            text = json.loads(line)['text']
+            text = re.sub("[\\n]+", "\\n",text)
+            yield text
+    #         yield (title,text)
+
+    
+def transform(text_inp):
+    """
+    这里是把各个标点符号都前后加上空格分开，不确定这样是否可以增加文本生成时对标点的准确表示
+    理论上在建立索引的时候表征过的元素（例如"\n"索引为0）就有可能性
+    但是不分开，直接把 "you!"(idx=11) 当作一个新的整体而不是 "you"(idx=9) 和 "!"(idx=10) 可能也行
+    """
+    for t in ["\\n",", "]:
+        text_inp = re.sub(t, " "+t+" ",text_inp)
+    text_inp = re.sub("\. "," . ",text_inp) # "." 不好直接放在循环中一起做，规矩不太一样单独做了 
+    return text_inp
+
+
+text_g = load_f(fp)
+result_set = set()
+while True:
+    chunk = list(itertools.islice(text_g,10000))
+    if len(chunk) > 0:
+        for text in chunk:
+            # 不使用transform
+            # text = transform(text)
+            result_set.update(text.replace("\n"," \n ").strip().split(" "))
+    else:
+        result_set = [i for i in result_set if i != ""]
+        break
+
+
+import pickle
+result_set_d = dict([(word,idx) for idx,word in enumerate(result_set)])
+with open(result_set_fp+".pickle","wb+") as f:
+    pickle.dump(result_set_d,f)
+
+with open(result_set_fp+".pickle","rb+") as f:
+    word2idx_dict = pickle.load(f)
+
+list(itertools.islice(word2idx_dict.items(),10))
+
+from collections import deque
+
+text_g = load_f(fp)
+wordsIdx = deque()
+stopCnt = 0
+while True:
+    chunk = list(itertools.islice(text_g,10000))
+    if len(chunk) > 0:
+        for text in chunk:
+            words = text.replace("\n"," \n ").strip().split(" ")
+            words = [i for i in words if i != ""]
+            wordsIdx.append([word2idx_dict[w] for w in words])
+            print(">>>", words[:10])
+            for i in list(itertools.islice(wordsIdx,10)):
+                print(i[:10])  # 每次都打印wordsIdx的top10段落的top10个词
+            stopCnt += 1
+            assert stopCnt<=5
+    else:
+        result_set = [i for i in result_set if i != ""]
+        break
+
+from collections import deque
+
+text_g = load_f(fp)
+wordsIdx = deque()
+with tqdm() as pbar:
+    while True:
+        chunk = list(itertools.islice(text_g,10000))
+        if len(chunk) > 0:
+            for text in chunk:
+                words = text.replace("\n"," \n ").strip().split(" ")
+                words = [i for i in words if i != ""]
+                words_idx = ([word2idx_dict[w] for w in words]+[-1]*1024)[:300]  # 每篇文章最多取1024个词
+                wordsIdx.append(words_idx)
+                pbar.update(1)
+        else:
+            break
+with open(coded_article_fp,"wb+") as fwb:
+    pickle.dump(list(wordsIdx),fwb)
+
+with open(coded_article_fp,"rb+") as frb:
+    coded_article = pickle.load(frb)
+
+"ahuob, yorg, lashudgpwet:'uoweg'jkafngop,jpagp!!!ljaeprg 8*_823r".split()
+
+def load_f(fp_inp):
+    with open(fp_inp,"r") as f:
+        for line in f:
+            title = json.loads(line)['title']
+            text = json.loads(line)['text']
+#             text = re.sub("[\\n]+", "\\n",text)
+            yield text
+#             yield (title,text)
+
+    
+def transform(text_inp):
+    """
+    这里是把各个标点符号都前后加上空格分开，不确定这样是否可以增加文本生成时对标点的准确表示
+    理论上在建立索引的时候表征过的元素（例如"\n"索引为0）就有可能性
+    但是不分开，直接把 "you!"(idx=11) 当作一个新的整体而不是 "you"(idx=9) 和 "!"(idx=10) 可能也行
+    """
+    for t in ["\\n",", "]:
+        text_inp = re.sub(t, " "+t+" ",text_inp)
+    text_inp = re.sub("\. "," . ",text_inp) # "." 不好直接放在循环中一起做，规矩不太一样单独做了 
+    return text_inp
+
+
+text_g = load_f(fp)
+result_set = set()
+while True:
+    chunk = list(itertools.islice(text_g,10000))
+    if len(chunk) > 0:
+        for text in chunk:
+            # 不使用transform
+            # text = transform(text)
+            result_set.update(text.replace("\n"," \n ").strip().split(" "))
+    else:
+        result_set = [i for i in result_set if i != ""]
+        break
+
+
+import pickle
+result_set_d = dict([(word,idx) for idx,word in enumerate(result_set)])
+with open(result_set_fp+".pickle","wb+") as f:
+    pickle.dump(result_set_d,f)
+
+class Model:
+    def __init__(self, vocab_cnt, num_steps, batch_size,
+                 lstm_layers,lr,grad_clip=5):
+        # build graph
+        self.graph = tf.get_default_graph()
+        with self.graph.as_default():
+            self.sess = tf.Session()
+            # input
+            self.inputs = tf.placeholder(tf.int32, shape=(batch_size, num_steps), name='inputs')
+            self.labels = tf.placeholder(tf.int32, shape=(batch_size, num_steps), name='label')
+            self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
+            # lstm
+            cell, self.initial_state = self.build_lstm(lstm_layers, batch_size, self.keep_prob)
+            # one-hot
+            inp_onehot = tf.one_hot(self.inputs, vocab_cnt)
+            # run RNN
+            outputs, self.final_state = tf.nn.dynamic_rnn(cell, inp_onehot, initial_state = self.initial_state)
+            # format | todo: 暂时取第0层的节点数作为lstm_size，注意控制各层节点数相同
+            self.prediction, self.logits = self.build_output(outputs, lstm_layers[0], vocab_cnt)
+            # Loss 和 optimizer (with gradient clipping)
+            self.loss = self.build_loss(self.logits, self.labels, vocab_cnt)
+            self.optimizer = self.build_optimizer(self.loss, lr, grad_clip)
+
+
+    @staticmethod
+    def build_lstm(lstm_layers, batch_size, keep_prob):
+        lstm_cell_list = []
+        for lstm_size in lstm_layers:
+            # 构建一个基本lstm单元
+            lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
+            lstm_dropout = tf.contrib.rnn.DropoutWrapper(lstm, output_keep_prob=keep_prob)
+            lstm_cell_list.append(lstm_dropout)
+        # 堆叠
+        cell = tf.contrib.rnn.MultiRNNCell(lstm_cell_list)
+        initial_state = cell.zero_state(batch_size, tf.float32)
+        return cell, initial_state
+
+    @staticmethod
+    def build_output(lstm_output, in_size, out_size):
+        '''
+        构造输出层
+
+        lstm_output: lstm层的输出结果(outputs 所有时间步的h_state)
+        in_size: lstm的hidden_size
+        out_size: softmax层的size
+
+        '''
+
+        # lstm_output: [batch_size, max_time, last_hidden_size]
+        # 将lstm的输出按照列concate，例如[[1,2,3],[7,8,9]], shape=(2,3)
+        # tf.concat的结果是[1,2,3,7,8,9]
+        seq_output = tf.concat(lstm_output, axis=1)  # tf.concat(concat_dim, values)
+        # reshape
+        x = tf.reshape(seq_output, [-1, in_size])
+
+        # 将lstm层与softmax层全连接
+        with tf.variable_scope('softmax'):
+            softmax_w = tf.Variable(tf.truncated_normal([in_size, out_size], stddev=0.1))
+            softmax_b = tf.Variable(tf.zeros(out_size))
+
+        # 计算logits
+        logits = tf.matmul(x, softmax_w) + softmax_b
+
+        # softmax层返回概率分布
+        out = tf.nn.softmax(logits, name='predictions')
+
+        return out, logits
+
+    @staticmethod
+    def build_loss(logits, labels, vocab_cnt):
+        '''
+        根据logits和targets计算损失
+
+        logits: 全连接层的输出结果（不经过softmax）
+        label: targets
+        vocab_cnt: vocab_size
+
+        '''
+
+        # One-hot编码
+        y_one_hot = tf.one_hot(labels, vocab_cnt)
+        y_reshaped = tf.reshape(y_one_hot, logits.get_shape())
+
+        # Softmax cross entropy loss
+        loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=y_reshaped)
+        loss = tf.reduce_mean(loss)
+
+        return loss
+
+    @staticmethod
+    def build_optimizer(loss, learning_rate, grad_clip):
+        '''
+        构造Optimizer
+
+        loss: 损失
+        learning_rate: 学习率
+
+        '''
+
+        # 使用clipping gradients
+        tvars = tf.trainable_variables()
+        grads, _ = tf.clip_by_global_norm(tf.gradients(loss, tvars), grad_clip)
+        train_op = tf.train.AdamOptimizer(learning_rate)
+        optimizer = train_op.apply_gradients(zip(grads, tvars))
+
+        return optimizer
+        
+        
+
+def get_batches()
+
+batch_size = 100         # Sequences per batch
+num_steps = 100          # Number of sequence steps per batch
+lstm_layers = [512]*2
+learning_rate = 0.001    # Learning rate
+keep_prob = 0.5         # Dropout keep probability
+
+epoch=20
+model = Model(len(word2idx_dict), num_steps=num_steps, batch_size=batch_size,
+                lstm_layers=lstm_layers, lr=learning_rate)
+
+saver = tf.train.Saver(max_to_keep=100)
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    
+    counter = 0
+    for e in range(epochs):
+        # Train network
+        new_state = sess.run(model.initial_state)
+        loss = 0
+        for x, y in get_batches(coded_article, batch_size, num_steps):
+            counter += 1
+            start = time.time()
+            feed = {model.inputs: x,
+                    model.targets: y,
+                    model.keep_prob: keep_prob,
+                    model.initial_state: new_state}
+            batch_loss, new_state, _ = sess.run([model.loss, 
+                                                 model.final_state, 
+                                                 model.optimizer], 
+                                                 feed_dict=feed)
+            
+            end = time.time()
+            # control the print lines
+            if counter % 100 == 0:
+                print('轮数: {}/{}... '.format(e+1, epochs),
+                      '训练步数: {}... '.format(counter),
+                      '训练误差: {:.4f}... '.format(batch_loss),
+                      '{:.4f} sec/batch'.format((end-start)))
+
+            if (counter % save_every_n == 0):
+                saver.save(sess, "./tmp/lstm_anna/i{}_l{}.ckpt".format(counter, lstm_layers[0]))
+    
+    saver.save(sess, "./tmp/lstm_anna/i{}_l{}.ckpt".format(counter, lstm_layers[0]))
+
+
