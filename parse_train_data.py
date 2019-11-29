@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# 涂博的人脸样本数据，根据对应的json文件获得各种属性的分类样本
+
 # # Prepare
 
 # In[1]:

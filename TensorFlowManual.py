@@ -16,26 +16,18 @@ import itertools
 from zac_pyutils.ExqUtils import zprint
 
 
+# # Tensorflow API解释
+
 # In[3]:
 
 
 import tensorflow as tf
-
-
-# # Tensorflow API解释
-
-# In[4]:
-
-
-import tensorflow as tf
-from IPython.core.interactiveshell import InteractiveShell
-InteractiveShell.ast_node_interactivity = "all"
-get_ipython().run_line_magic('matplotlib', 'inline')
+import tensorflow_hub as hub
 
 
 # # 一些基本的配置
 
-# In[5]:
+# In[22]:
 
 
 import os
@@ -60,6 +52,108 @@ with tf.Session(config=sess_conf) as sess:
 run_opt = tf.RunOptions()
 run_opt.report_tensor_allocations_upon_oom = True
 
+
+# In[51]:
+
+
+g_sess = tf.Session()
+
+
+# # DataSet API
+# 参考 [知乎这篇文章的介绍](https://zhuanlan.zhihu.com/p/30751039)
+
+# 主要就关注两个基础类 `Dataset` 和 `Iterator`
+# - `tf.data.Dataset.from_tensor_slices` 接受一个`ndarray`
+# - 得到的结果记为`dataset`，通过`dataset.make_one_shot_iterator()`得到一个「只遍历一次」的 `iterator`
+# 
+
+# ## 从多种数据源中创建DataSet
+
+# In[36]:
+
+
+samplesCnt = 15
+# 字典
+data = {"a": np.random.randint(0,9,size=[samplesCnt]),
+        "b": np.random.randint(20,30,size=(samplesCnt, 2))}
+# tuple
+data = (np.random.randint(0,9,size=[samplesCnt]),
+        np.random.randint(20,30,size=(samplesCnt, 2)))
+# 普通的多维数组
+data = np.random.randint(0,99,size=[samplesCnt,4])
+
+
+# In[43]:
+
+
+print(">>> 只用了data的 top4 元素")
+print(">>>data:\n",data[:4])
+dataset = tf.data.Dataset.from_tensor_slices(data[:4])
+one_shot = dataset.make_one_shot_iterator()
+with tf.Session() as sess:
+    for i in range(6):
+        try:
+            print(f">>> get_next at idx-{i}\n", sess.run(one_shot.get_next()))
+        except tf.errors.OutOfRangeError:
+            print(">>> [ERROR]: depleted")
+    
+
+
+# ## Dataset的batch等操作
+# `.shuffle`的参数`buffer_size` 控制从多少来源里采样
+# > representing the number of elements from this dataset from which the new dataset will sample
+# 
+# `.batch`的参数`drop_remainder` 控制最后一个batch如果不够batch_size，是否要扔掉
+# - `True` shape ==> `((64, 100), (64, 100))`。
+# - `False`shape ==> `((?,100),(?,100))`
+# > representing the number of consecutive elements of this dataset to combine in a single batch.
+# 
+# 还可以做`fitler`、`map`、`repeat` 等操作
+
+# In[46]:
+
+
+print(f">>>data: {data.shape}\n",data)
+# 这里用len(data)做buffer_size表示shuffle是全集里采样
+batch_size=3
+dataset = tf.data.Dataset.from_tensor_slices(data).batch(3).shuffle(buffer_size=len(data))  
+one_shot = dataset.make_one_shot_iterator()
+with tf.Session() as sess:
+    for i in range(6):
+        try:
+            print(f">>> get_next at [idx]:{i} [batch_size]:{batch_size}\n", sess.run(one_shot.get_next()))
+        except tf.errors.OutOfRangeError:
+            print(">>> [ERROR]: depleted")
+
+
+# ## Dataset2Iterator
+
+# 主要有四种做法：
+# - make_one_shot_iterator
+# 
+# 写demo常用
+# 
+# - initializable iterator
+# 
+# 一般读很大的数组时会用这个，避免把大数组存在计算图里（*`from_tensor_slices`本质是把`array`作为一个`tf.constants`存到了计算图里*)
+# > - initializable iterator必须要在使用前通过sess.run()来初始化
+# > - 使用initializable iterator，可以将placeholder代入Iterator中，这可以方便我们通过参数快速定义新的Iterator
+# 
+# ```python
+# limit = tf.placeholder(dtype=tf.int32, shape=[])
+# dataset = tf.data.Dataset.from_tensor_slices(tf.range(start=0, limit=limit))
+# iterator = dataset.make_initializable_iterator()
+# next_element = iterator.get_next()
+# with tf.Session() as sess:
+#     sess.run(iterator.initializer, feed_dict={limit: 10})
+#     for i in range(10):
+#         value = sess.run(next_element)
+#         assert i == value
+# ```
+# 
+# - reinitializable iterator
+# - feedable iterator
+# 
 
 # # 模型保存与恢复
 
@@ -87,6 +181,112 @@ run_opt.report_tensor_allocations_upon_oom = True
 
 saver = tf.train.Saver()
 saver.save(sess,"xxx")
+
+
+# ## 预训练模型的加载
+
+# ### TF Slim 系列的API
+# 
+# v1 提示 `InvalidArgumentError`
+# ```python
+# InvalidArgumentError: Can not squeeze dim[1], expected a dimension of 1, got 2 for 'InceptionV1/Logits/SpatialSqueeze' (op: 'Squeeze') with input shapes: [?,2,2,1000].
+# ```
+# 
+# v3 提示 `NotFoundErr` 已经提交issue
+# 
+# v4 这个版本(tf=1.15)都没有实现 inception_v4
+
+# In[16]:
+
+
+from tensorflow.contrib.slim.python.slim.nets import inception
+from tensorflow.contrib import slim
+import tensorflow as tf
+ckpt_fp = "./tmp/CBIR/inception_v3.ckpt"
+# ckpt_fp = "/Users/zac/Downloads/cv_models/inception_v3.ckpt"
+g = tf.Graph()
+with g.as_default():
+    sess = tf.Session(graph=g)
+    input_image = tf.placeholder(dtype=tf.float32, shape=[None, 224, 224, 3], name="input")
+    with slim.arg_scope(inception.inception_v3_arg_scope()):
+        logits, end_points = inception.inception_v3(input_image, is_training=False)
+    f_vec = end_points['PreLogits']  # (N, 2048)
+    f_vec
+#    saver = tf.train.Saver()
+#    saver.restore(sess, ckpt_fp)
+
+
+# ### TF Hub 系列
+
+# In[40]:
+
+
+from zac_pyutils import CVUtils
+img = CVUtils.Load.image_by_pil_from("https://images.unsplash.com/photo-1506744038136-46273834b3fb?ixlib=rb-1.2.1&w=1000&q=80")
+img = img.resize((224,224))
+img
+image_batch = np.array(img)[np.newaxis,:] / 255.0
+image_batch.shape
+
+
+# #### 模型存储在本地的地址
+
+# In[ ]:
+
+
+url = 'https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4'
+hub.module_v2.resolve(url)
+
+
+# #### hub.KerasLayer加载
+
+# In[53]:
+
+
+tf.reset_default_graph()
+# 加载 | 这个版本不支持 hub.Module 加载模型
+url = "https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4"
+model = tf.keras.Sequential([hub.KerasLayer(url, trainable=False)])
+IMAGE_SHAPE = (224, 224)
+# 拿到特征向量
+res = model.predict(image_batch)  # img_batch.shape: [N,224,224,3]
+print(f"预测特征向量结果 shape:{res.shape}\n",res)
+
+
+# keras加载的模型只能直接用结果了，不论从计算图还是遍历名字都看不出什么可用的
+# 
+# slim里的inception结构保存的计算图更符合原论文直观印象，并且endpoints里很多都可用
+
+# In[48]:
+
+
+k_sess=tf.keras.backend.get_session()
+k_g = k_sess.graph
+[i for i in k_g.get_operations() if "out" in i.name]
+
+
+# #### hub.Module加载
+
+# In[57]:
+
+
+tf.reset_default_graph()
+module = hub.Module("https://tfhub.dev/google/imagenet/resnet_v2_50/feature_vector/3")
+height, width = hub.get_expected_image_size(module)
+images = tf.placeholder(dtype=tf.float32,shape=[None,224,224,3],name="img_input_custom")  # A batch of images with shape [batch_size, height, width, 3].
+features = module(images)  # Features with shape [batch_size, num_features].
+# features 是一个tensor
+sess = tf.Session()
+with sess:
+    sess.run(tf.global_variables_initializer())
+    res = sess.run(features,feed_dict={images:image_batch})
+    print(f"预测特征向量结果 shape:{res.shape}\n",res)
+
+
+# In[51]:
+
+
+[i for i in tf.get_default_graph().get_operations() if "out" in i.name]
 
 
 # ## 拿到模型做点别的操作
@@ -125,27 +325,46 @@ saver.save(sess,"xxx")
 # ```
 #     
 
-# In[ ]:
-
-
-
-
-
 # ## ckpt <--> pb
 
 # In[ ]:
 
 
+def convert_ckpt2pb(ckpt_fp, pb_fp, output_name_list):
+    """
+    将ckpt模型存储为pb格式，示例：
+        convert_ckpt2pb('ckpt/cnn.ckpt-10000','pb/cnn.pb',['output/proba'])
+    :param ckpt_fp: 输入.ckpt的路径 |
+    :param pb_fp: 输出.pb的路径 |
+    :param output_name_list: 输出节点的名字，一般就是一个，['output/proba']，注意此参数接受的是节点名（没有后面的数字）
+    """
+    saver = tf.train.import_meta_graph(ckpt_fp + '.meta', clear_devices=True)
 
+    with tf.Session() as sess:
+        saver.restore(sess, ckpt_fp)  # 恢复图并得到数据
+        output_graph_def = tf.graph_util.convert_variables_to_constants(
+            sess=sess,
+            input_graph_def=sess.graph_def,
+            output_node_names=output_name_list)
 
-
-# In[ ]:
-
-
-
+        with tf.gfile.GFile(pb_fp, "wb") as f:  # 保存模型
+            f.write(output_graph_def.SerializeToString())  # 序列化输出
+        print("%d ops in the final graph." % len(output_graph_def.node))  # 得到当前图有几个操作节点
 
 
 # ## 查看ckpt的计算图
+# 目前只知道通过restore之后，写tensorboard再看
+# 
+# 有一个查看ckpt所有变量的方法:
+# ```python
+# from tensorflow.python.tools.inspect_checkpoint import print_tensors_in_checkpoint_file
+# print_tensors_in_checkpoint_file(ckpt_fp, tensor_name=None, all_tensors=False)
+# ```    
+# 
+# 如果只想要计算图可以试试如下
+# ```python
+# writer = tf.summary.FileWriter(summary_path, self.graph)
+# ```
 
 # In[ ]:
 
@@ -605,6 +824,41 @@ with tf.Session() as sess:
     sess.run([i,n])
 
 
+# ## tf.squeeze
+# >axis默认为None,返回一个将原始input中所有维度为1的维删掉后的tensor
+# >
+# >axis若被指定为某个维度，必须保证此维度为1，否则报错`InvalidArgumentError`
+# >
+# >`InvalidArgumentError: Can not squeeze dim[0], expected a dimension of 1, got 3 for 'Squeeze_24' (op: 'Squeeze') with input shapes: [3,1,65].`
+
+# ## tf.split
+# > 切分tensor，**返回一个list**
+# ```python
+# split(
+#     value,                 # 待切分tensor
+#     num_or_size_splits,    # 若是整数n，将分为n个子tensor。若是list，切分为len(list)个子tensor。 
+#     axis=0,                
+#     num=None,
+#     name='split'
+# )
+# ```
+
+# In[103]:
+
+
+import tensorflow as tf
+
+a = np.array([[1,2,3],
+     [4,5,6]])
+with tf.Session() as sess:
+    p=sess.run(tf.split(a, 3, 1))
+    q=sess.run(tf.split(a, [1, 2], 1))
+    g=sess.run(tf.split(a, [2, 1], 1))
+    print(f"在axis=1上切成三份: 切分后各tensor的shape: {[i.shape for i in p]}\n>>",p)
+    print(f"在axis=1上用list[1,2]切分: {[i.shape for i in q]}\n>>",q[0],"\n>>",q[1])
+    print(f"在axis=1上用list[2,1]切分: {[i.shape for i in g]}\n>>",g[0],"\n>>",g[1])
+
+
 # ## tf.slice & tf.gather
 # - `tf.slice`: 按照指定的下标范围抽取连续区域的子集
 #     - 用得少，一般直接用索引 `[a:b,c:d,:-5]` 这种方式直接取（更pythonic）
@@ -680,6 +934,34 @@ with tf.Session() as sess:
 
 sigmoid(1)
 sigmoid(0)
+
+
+# ## tf.random.categorical
+# 是加权随机抽样的方法，注意权重参数要带log，因为内部实现的时候缝进去了一个softmax操作
+# 
+# 为了使用这个函数你外部就不得不加个log，这样算softmax的时候，就变成了 
+# $$\frac{e^{ln(a)}}{e^{ln(a)}+e^{ln(b)+e^{ln(c)}+e^{ln(d)}}}= \frac{a}{a+b+c+d}$$
+# - 第一个参数是取了log的权重，注意**【必须是二维】**
+#     - 二维的含义是 (a,b) 会生成a组样本，每组按b代表的权重抽样n_samples个
+# - 注意这里面为负数的自然就被算成概率0了
+
+# In[93]:
+
+
+# opt = tf.random.categorical([0.7,0.2,0.1],[3,2,4])
+weights = [[0.1, 7., 17., 66.],
+           [0.1, -1, 17., 66.]]  # 量级没关系，大小对就行，这个是定义了一个分布，注意必须是二维的
+n_samples = 1  # 从分布中抽取 100 个样本
+samples = tf.random.categorical(tf.log(weights), n_samples)
+g_sess.run(samples).shape
+g_sess.run(samples)
+np.unique(g_sess.run(samples),return_counts=True)
+
+
+# In[ ]:
+
+
+
 
 
 # ## tf.onehot

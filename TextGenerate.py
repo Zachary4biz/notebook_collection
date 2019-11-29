@@ -696,7 +696,7 @@ def pick_top_n(preds_, vocab_size, top_n=5, random=False):
     preds = preds_.copy()  # 避免改变原preds
     p = np.squeeze(preds)
     # 将除了top_n个预测值的位置都置为0
-    p[np.argsort(p)[:-top_n]] = 0
+    p[np.argsort(p)[-top_n:]] = 0
     # 归一化概率
     p = p / np.sum(p)
     # 随机选取一个字符 / 或者取概率最大的字符
