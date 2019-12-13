@@ -1046,6 +1046,43 @@ with tf.Session() as sess:
 
 # ## gradient相关
 
+# ### tf.GradientTape()
+# **可训练的不用管，直接被watch了；其他的可以手动watch一下**
+# > Trainable variables (created by tf.Variable or tf.compat.v1.get_variable, where trainable=True is default in both cases) are automatically watched. Tensors can be manually watched by invoking the watch method on this context manager.
+# 
+# 
+# 直接计算梯度
+# ```python
+# x = tf.constant(3.0)
+# with tf.GradientTape() as g:
+#     g.watch(x)
+#     y = x * x
+# dy_dx = g.gradient(y, x) # Will compute to 6.0
+# ```
+# 
+# 求高阶导
+# ```python
+# x = tf.constant(3.0)
+# with tf.GradientTape() as g:
+#     with tf.GradientTape() as gg:
+#         gg.watch(x)
+#         y = x * x
+#     dy_dx = gg.gradient(y, x)   # 对x求一阶导 Will compute to 6.0
+# d2y_dx2 = g.gradient(dy_dx, x)  # 对x求二阶导 Will compute to 2.0
+# ```
+# 
+# 如果在`with`之后会用到多次`g`，需要在`with`初始化时指定`persistent=True`，后面可以`del g`手动清除
+# ```python
+# x = tf.constant(3.0)
+# with tf.GradientTape(persistent=True) as g:
+#     g.watch(x)
+#     y = x * x
+#     z = y * y
+# dz_dx = g.gradient(z, x)  # 108.0 (4*x^3 at x = 3)
+# dy_dx = g.gradient(y, x)  # 6.0
+# del g  # Drop the reference to the tape
+# ```
+
 # ### opt -> opt.compute -> opt.apply
 # ```python
 # _optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, beta1=0.9, beta2=0.999,epsilon=1e-8)
