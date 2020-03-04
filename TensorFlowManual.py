@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
+# In[6]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
@@ -554,6 +554,56 @@ inpTS = tf.placeholder(tf.int32, [None], name="time_steps")
 with tf.Session() as sess:
     sess.run(inpTS, feed_dict={inpTS:[1,2,3]})
     sess.run(inpTS, feed_dict={inpTS:[1,2,3,4,5,6]})
+
+
+# ## tf.einsum
+
+# In[24]:
+
+
+img1 = np.array([[[1,2,3], [2,3,4], [1,2,3]],
+                 [[1,2,3], [2,3,4], [1,2,3]],
+                 [[1,2,3], [2,3,4], [1,2,3]],])
+
+img2 = np.array([[[1,1,3], [2,3,4], [1,2,3]],
+                 [[1,1,3], [2,3,4], [1,2,3]],
+                 [[1,1,3], [2,3,4], [1,2,3]],])
+
+# img1=np.random.random((4,3,3))
+# img2=np.random.random((4,3,3))
+f"img1.shape:{img1.shape}, img2.shape:{img2.shape}"
+a = np.expand_dims(img1,axis=0)
+b = np.expand_dims(img2,axis=0)
+f"a.shape:{a.shape}, b.shape: {b.shape}"
+
+res = np.einsum('ijkm,ijkn->imn',a,b)
+f"res.shape:{res.shape}"
+res
+
+a[0,:,:,0]
+b[0,:,:,0]
+
+
+# In[ ]:
+
+
+# Matrix multiplication
+einsum('ij,jk->ik', m0, m1)  # output[i,k] = sum_j m0[i,j] * m1[j, k]
+
+# Dot product
+einsum('i,i->', u, v)  # output = sum_i u[i]*v[i]
+
+# Outer product
+einsum('i,j->ij', u, v)  # output[i,j] = u[i]*v[j]
+
+# Transpose
+einsum('ij->ji', m)  # output[j,i] = m[i,j]
+
+# Trace
+einsum('ii', m)  # output[j,i] = trace(m) = sum_i m[i, i]
+
+# Batch matrix multiplication
+einsum('aij,ajk->aik', s, t)  # out[a,i,k] = sum_j s[a,i,j] * t[a, j, k]
 
 
 # ## tf.add & tf.nn.bias_add

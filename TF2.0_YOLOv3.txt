@@ -1,0 +1,121 @@
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+%matplotlib inline
+from tqdm.auto import tqdm
+import concurrent.futures
+from multiprocessing import Pool
+import copy,os,sys
+from collections import Counter,deque
+import itertools
+import os
+import time
+
+import tensorflow as tf
+import tensorflow_hub as hub
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import animation
+from PIL import Image
+import pandas as pd
+import subprocess
+import dlib
+from zac_pyutils import ExqUtils
+
+gpus = tf.config.experimental.list_physical_devices('GPU')
+gpus
+if gpus:
+    # Restrict TensorFlow to only use the first GPU
+    try:
+        tf.config.experimental.set_visible_devices(gpus[1], 'GPU')
+        tf.config.experimental.set_memory_growth(gpus[1], True)
+        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
+    except RuntimeError as e:
+        # Visible devices must be set before GPUs have been initialized
+        print(e)
+
+Image.open("/home/zhoutong/darknet/data/prepared_data/blowjob_11.jpg")
+"""
+#[bash cmd]
+fp=/home/zhoutong/darknet/data/prepared_data/blowjob_11.jpg
+weight=/home/zhoutong/darknet/data/custom_weight/custom_yolov3_final.weights
+obj_data=/home/zhoutong/darknet/data/obj.data
+#[darknet]
+cd ~/darknet
+!./darknet detector test $obj_data cfg/custom_yolov3.cfg $weight $fp -thresh 0.3
+#[tf]
+num_classes=3
+classes=/home/zhoutong/darknet/data/obj.names
+tf_weight=/home/zhoutong/darknet/data/custom_weight/custom_yolov3_final_ckpt
+tf_pb=/home/zhoutong/darknet/data/custom_weight/custom_yolov3_final_pb
+cd ~/yolov3-tf2
+# [darknet.weight to tf.ckpt]
+# python convert.py --weights $weight --output $tf_weight  --num_classes $num_classes
+python detect.py --image $fp --num_classes $num_classes --classes $classes --weights $tf_weight
+# [tf.ckpt to .pb]
+cd ~/yolov3-tf2/tools
+python export_tfserving.py --image $fp --num_classes $num_classes --classes $classes --weights $tf_weight --output $tf_pb
+"""
+Image.open("/home/zhoutong/darknet/predictions.jpg")
+Image.open("/home/zhoutong/yolov3-tf2/output.jpg")
+
+
+from _Yolo_v3 import YoloV3
+M = YoloV3(classes=3)
+ckpt_fp=tf.train.latest_checkpoint("/home/zhoutong/darknet/data/custom_weight/")
+print(ckpt_fp)
+M.load_weights(ckpt_fp)
+M.count_params()
+
+M=tf.saved_model.load("/home/zhoutong/darknet/data/custom_weight/custom_yolov3_final_pb")
+infer = M.signatures[tf.saved_model.DEFAULT_SERVING_SIGNATURE_DEF_KEY]
+M
+
+from utils import draw_outputs
+class_names=['penis','vagina','breast']
+IMAGE_SHAPE=(416,416)
+
+fp_dir="/home/zhoutong/notebook_collection/tmp/CV_clf/nsfw/apus_samples/NSFW"
+fp_list=[os.path.join(fp_dir,fp) for fp in os.listdir(fp_dir) if fp.endswith("jpg")]
+fp_list=fp_list[8:20]
+img_batch = [np.array(Image.open(fp).resize(IMAGE_SHAPE))/255. for fp in fp_list]
+img_batch = np.array(img_batch)
+len(img_batch)
+img_batch_tensor = tf.convert_to_tensor(img_batch)
+img_batch_tensor = tf.cast(img_batch_tensor,tf.float32)
+# 注意这里pred的结果是一个list，每个list都是一个batch的结果
+# 所以如果要取batch里的第idx个的结果应该是 [i[idx] for i in pred_batch]
+# pred_batch = M.predict(img_batch)
+pred_batch = M(img_batch_tensor)
+
+print([i.shape for i in pred_batch])
+
+img_draw = [draw_outputs(img, [i[idx] for i in pred_batch], class_names) for idx,img in enumerate(img_batch)]
+
+ExqUtils.pltshow(img_draw,figsize=(15,15))
+
+IMAGE_SHAPE=(416,416)
+fp_dir="/home/zhoutong/notebook_collection/tmp/CV_clf/nsfw/apus_samples/NSFW"
+fp_list=[os.path.join(fp_dir,fp) for fp in os.listdir(fp_dir) if fp.endswith("jpg")]
+fp_list_iter=enumerate(fp_list)
+import itertools as it
+res=[]
+while True:
+    fp_list_batch=[fp for idx,fp in it.islice(fp_list_iter,64)]
+    if len(fp_list_batch)>0:
+        img_batch = [np.array(Image.open(fp).resize(IMAGE_SHAPE),dtype=np.float)/255 for fp in fp_list_batch]
+        inp=tf.convert_to_tensor(img_batch)
+        inp=tf.cast(inp, tf.float32)
+        pred=infer(inp)
+    #     boxes, objectness, classes, nums = pred
+        res.append(pred)
+    else:
+        break
+
+np.unique(np.concatenate([p['yolo_nms_3_3'].numpy() for p in res]),return_counts=True)
+
+from utils import draw_outputs
+class_names=['penis','vagina','breast']
+img_draw=[draw_outputs(img,[i[idx] for i in pred],class_names) for idx,img in enumerate(img_batch)]
+
+
