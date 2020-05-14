@@ -5,7 +5,7 @@
 # 
 # 参照 [官网tutorials](https://www.tensorflow.org/tutorials/text/text_generation#%E4%B8%8B%E8%BD%BD%E8%8E%8E%E5%A3%AB%E6%AF%94%E4%BA%9A%E6%95%B0%E6%8D%AE%E9%9B%86)
 
-# In[1]:
+# In[3]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
@@ -104,6 +104,8 @@ def split_input_target(chunk):
 
 
 # 创建训练样本 / 目标
+text = open(path_to_file, 'rb').read().decode(encoding='utf-8')
+text_as_int = np.array([char2idx[c] for c in text])
 char_dataset = tf.data.Dataset.from_tensor_slices(text_as_int)
 sequences_dataset = char_dataset.batch(seq_length+1, drop_remainder=True)
 dataset = sequences_dataset.map(split_input_target)
@@ -127,9 +129,6 @@ dataset
 # In[5]:
 
 
-vocab_size = len(vocab)
-embedding_dim = 256
-rnn_units = 1024
 def build_model(vocab_size, embedding_dim, rnn_units, batch_size):
     model = tf.keras.Sequential([
         tf.keras.layers.Embedding(vocab_size, embedding_dim, batch_input_shape=[batch_size, None]),
@@ -145,6 +144,8 @@ def build_model(vocab_size, embedding_dim, rnn_units, batch_size):
 # In[8]:
 
 
+embedding_dim = 256
+rnn_units = 1024
 model = build_model(vocab_size = len(vocab),embedding_dim=embedding_dim,rnn_units=rnn_units,batch_size=BATCH_SIZE)
 model.summary()
 
@@ -177,7 +178,13 @@ history = model.fit(dataset, epochs=EPOCHS, callbacks=[checkpoint_callback])
 
 # 恢复模型
 
-# In[120]:
+# In[9]:
+
+
+model.layers[1].states
+
+
+# In[6]:
 
 
 vocab_size=65

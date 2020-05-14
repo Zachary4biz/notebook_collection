@@ -328,6 +328,7 @@ class TextCNN(object):
             with tf.name_scope("conv-maxpool-%s" % filterSize):
                 # 卷积层，卷积核尺寸为filterSize * embeddingSize，卷积核的个数为numFilters
                 # 初始化权重矩阵和偏置
+                # 4-D (height,width,in_channels,out_channels) | out_channels是多少就用多少个 Height*Width 的卷积核
                 filterShape = [filterSize, config.weDim, 1, config.model.numFilters]
                 W = tf.Variable(tf.truncated_normal(filterShape, stddev=0.1), name="W")
                 b = tf.Variable(tf.constant(0.1, shape=[config.model.numFilters]), name="b")

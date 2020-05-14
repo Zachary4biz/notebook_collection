@@ -40,7 +40,7 @@ import numpy as np
 #        [-1.79175947, -0.22314355]])
 # #########################################
 probabilities = {
-    'fair': np.array([1 / 6] * 6),  # 无偏骰子
+    'fair': np.array([1 / 6] * 6),  # 无偏骰子，6个点数都是一样的概率
     'loaded': np.array([0.04, 0.04, 0.04, 0.04, 0.04, 0.8]),  # 有偏骰子
 }
 log_likelihood = np.hstack([np.log(probabilities['fair']).reshape(-1, 1),

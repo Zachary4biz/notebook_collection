@@ -541,7 +541,7 @@ class EthnicityM_BCNN_App(tf.keras.Model):
                                                       kernel_regularizer=tf.keras.regularizers.l2(1e-4))
         self.FC = self.prediction_layer
     
-    @tf.function
+    @tf.function 
     def bilinear(self,inp):
         # bilinear pool
         phi_I = tf.einsum('ijkm,ijkn->imn',inp,inp)  # 外积

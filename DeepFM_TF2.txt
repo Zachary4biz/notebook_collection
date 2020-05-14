@@ -1,0 +1,500 @@
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+%matplotlib inline
+from tqdm.auto import tqdm
+import concurrent.futures
+from multiprocessing import Pool
+import copy,os,sys,psutil
+from collections import Counter,deque
+
+import tensorflow as tf
+import numpy as np
+import pandas as pd
+
+base_dir="/home/zhoutong/data/apus_ad/hc"
+app2hash_fp=base_dir+"/ad_hc_2020-04-22_app2hash.txt"
+info_fp = base_dir+"/ad_hc_2020-04-22_info.json"
+# trd_gz_fp = base_dir +"/ad_hc_2020-04-22.trd.gz"
+trd_gz_fp_list = [base_dir + i for i in ["/ad_hc_2020-04-21.trd.gz","/ad_hc_2020-04-22.trd.gz"]]
+
+with open(info_fp,"r") as fr:
+    info=json.load(fr)
+with open(app2hash_fp,"r") as fr:
+    hash2app = dict([i.strip("\n").split("\t")[::-1] for i in fr.readlines()])
+
+print(info['count'])
+info['detail'].keys()
+str_fields=info['detail']['string']
+double_fields=info['detail']['double']
+arr_int_fields=info['detail']['array<int>']
+long_fields=info['detail']['bigint']  # 时间戳 暂时不用，应该在spark里做一下解析
+int_fields=info['detail']['int']
+
+# one_hot_fields=["device_id_s"]
+# multi_hot_fields=["class_id_topN"]
+# dense_fields=["download_num_mid"]
+feature_desc = {}
+# onehot
+for f in str_fields:
+    feature_desc.update({f:tf.io.FixedLenFeature([], tf.string, default_value='')})
+# multi_hot
+for f in arr_int_fields:
+    feature_desc.update({f:tf.io.VarLenFeature(dtype=tf.int64)})
+# dense / numeric
+for f in double_fields:
+    feature_desc.update({f:tf.io.FixedLenFeature([],dtype=tf.float32,default_value=0)})
+for f in int_fields:
+    feature_desc.update({f:tf.io.FixedLenFeature([],dtype=tf.int64,default_value=0)})
+
+def _parse_func(inp):
+    return tf.io.parse_single_example(inp,feature_desc)
+
+
+
+trd=tf.data.TFRecordDataset(trd_gz_fp_list,compression_type='GZIP').map(_parse_func)
+for i in trd.take(2):
+    print(i)
+dataset=trd.shuffle(5*128).batch(128,drop_remainder=True)
+
+base_dir="/home/zhoutong/notebook_collection/tmp/CTR"
+data_fp=os.path.join(base_dir,"criteo_data_sampled_60k.csv")
+
+print("[data_fp]: "+data_fp)
+
+# 正负样本比: 0.254237288=1.5w/(4.4w+1.5w)
+df_head10 = pd.read_csv(data_fp, nrows=10)
+df_head10.head()
+num_feat=[i for i in df_head10.columns if i.startswith("I")]
+cat_feat=[i for i in df_head10.columns if i.startswith("C")]
+print("[num_feat]: "+ ",".join(num_feat))
+print("[cat_feat]: "+ ",".join(cat_feat))
+df_head10.groupby("label").agg({"label":"count"})
+
+df_total=pd.read_csv(data_fp, nrows=600000)
+df_total[num_feat].describe()
+df_total[num_feat].count()
+df_total[cat_feat].describe()
+print("所有category特征合计: ",df_total[cat_feat].describe().loc['unique',:].sum())
+print(">>> 注意以下的特征unique计数，是排除了NA的")
+df_total[cat_feat].describe().loc['unique',:].T
+df_total.groupby("label").agg({"label":"count"})
+
+# 全量直接做get_dummies容易卡死
+df_sparse=pd.get_dummies(df_total,sparse=True)
+df_sparse
+df_sparse.dtypes
+# "{:.4f} mb".format(df_sparse.memory_usage().sum()/1e6)
+
+# 自行遍历构造featureMap
+chunksize=1000
+df_total_iter=pd.read_csv(data_fp, chunksize=chunksize)
+num_feat=[]
+cat_feat=[]
+cat_featureMap={}
+multihot_feat=["C27","C28"]
+for idx,chunk in tqdm(enumerate(df_total_iter),total=60*10000/chunksize):
+    ###############################
+    # 随机构造两个multihot特征
+    ###############################
+    m1 = []
+    for i in range(chunk.shape[0]):
+        # 随机 0~100 长度的list，list内的元素是 0~2000 注意str化
+        random_size = np.random.randint(low=0,high=100+1)
+        m1.append(np.random.randint(low=0,high=2000+1,size=random_size).astype(str))
+    chunk['C27'] = m1
+    m2 = []
+    for i in range(chunk.shape[0]):
+        # 随机 0~20 长度的list，list内的元素是 0~100 注意str化
+        random_size = np.random.randint(low=0,high=20+1)
+        m2.append(np.random.randint(low=0,high=100+1,size=random_size).astype(str))
+    chunk['C28'] = m2
+
+    ###############################
+    # 提取numeric特征和category特征
+    ###############################
+    _num_feat=[i for i in chunk.columns if i.startswith("I")]
+    _cat_feat=[i for i in chunk.columns if i.startswith("C")]
+    if len(num_feat) > 0:
+        assert num_feat == _num_feat,f"I系特征不符，前{idx*chunksize}条为: {num_feat}，此后为{_num_feat}"
+    else:
+        num_feat = _num_feat
+    if len(cat_feat) > 0:
+        assert cat_feat == _cat_feat,f"C系特征不符，前{idx*chunksize}条为: {cat_feat}，此后为{_cat_feat}"
+    else:
+        cat_feat = _cat_feat
+    
+    #############################
+    # category特征构造出featureMap
+    #############################
+    for feat in cat_feat:
+#         features=list(chunk[feat].unique())
+        features=list(np.unique(np.hstack(chunk[feat].values.flat)))
+        features_ori=cat_featureMap.get(feat,[])
+        cat_featureMap.update({feat: list(set(features+features_ori))})
+    
+for k,v in cat_featureMap.items():
+    print(f"k:{k}, cnt:{len(v)}")
+
+cat_featureSize=sum([len(v) for k,v in cat_featureMap.items()])
+print("所有的category特征总计: {}".format(cat_featureSize))
+
+before=0
+cat_featureIdx_beginAt={}
+for k,v in cat_featureMap.items():
+    cat_featureIdx_beginAt.update({k:before})
+    before += len(v)
+print("各category特征的起始索引:")
+cat_featureIdx_beginAt
+
+chunk.head(5)
+
+def normalize(df_inp,num_fields):
+    """
+    连续特征归一化
+    """
+    df=df_inp.copy()
+    max_records=df[num_fields].apply(np.max,axis=0)
+    min_records=df[num_fields].apply(np.min,axis=0)
+    denominator=(max_records-min_records).apply(lambda x: x if x!=0 else 1e-4) 
+    for f in num_fields:
+        df[f] = df[f].apply(lambda x: np.abs(x-min_records[f])/denominator[f])
+    return df
+
+
+def fill_numeric_NA(df_inp,num_fields):
+    """
+    连续特征的NA填充 | 暂时直接用均值填充
+    """
+    df=df_inp.copy()
+    df_numeric_part=df[num_fields]
+    df[num_fields]=df_numeric_part.fillna(df_numeric_part.mean())
+    return df
+
+def map_cat_to_idx(chunk,cat_feat_=cat_feat,multihot_feat_=multihot_feat,cat_featureMap_=cat_featureMap,cat_featureIdx_beginAt_=cat_featureIdx_beginAt):
+    """
+    根据featureMap来进行映射
+    效率上存在问题，1k数据&26个cat特征，cat_featureMap有88w，耗时约15s
+    """
+    chunk_=chunk.copy()
+    for feat in cat_feat_:
+        if feat in multihot_feat_:
+            chunk_[feat]=chunk_[feat].apply(lambda x: [cat_featureMap_[feat].index(str(i))+cat_featureIdx_beginAt_[feat] for i in x])
+        else:
+            chunk_[feat]=chunk_[feat].apply(lambda x: cat_featureMap_[feat].index(str(x))+cat_featureIdx_beginAt_[feat])
+    return chunk_
+
+# df=normalize(df_head10,num_feat)
+df=normalize(chunk,num_feat)
+df=fill_numeric_NA(df,num_feat)
+df=map_cat_to_idx(df)
+df_featured=df
+df_featured.head(5)
+
+df_idx_ = df_featured.copy()
+df_idx_.head(5)
+"{:.2f}KB".format(df_idx_.memory_usage().sum()/1e3)
+label=df_idx_.pop("label").values
+num_features=df_idx_[num_feat].values
+cat_features=df_idx_[cat_feat].values
+multihot_features=df_idx_[multihot_feat].values
+onehot_features = df_idx_[list(set(cat_feat) - set(multihot_feat))].values
+
+"label.shape",label.shape
+"num_features.shape",num_features.shape
+"onehot_features.shape",onehot_features.shape
+"multihot_features.shape",multihot_features.shape
+
+num_features[:5,:5]
+onehot_features[:5,:5]
+multihot_features[:5,:5]
+
+class FMLayer(tf.keras.layers.Layer):
+    def __init__(self, feature_size, emb_size=30, **kwargs):
+        super().__init__(**kwargs)
+        self.feature_size = feature_size
+        self.emb_size = emb_size
+        self.kernel_emb = self.add_weight(name='kernel_emb', 
+                                          shape=(self.feature_size, self.emb_size),
+                                          initializer='glorot_uniform',
+                                          trainable=True)
+        self.kernel_w = self.add_weight(name='kernel_w',
+                                        shape=(self.feature_size,1),
+                                        initializer='glorot_uniform',
+                                        trainable=True)
+
+    def build(self, input_shape):
+        """
+        重写build方法，在这里glorot初始化emb表
+        改: FM的emb表和input_shape无关，还是不放在build里初始化了
+        """
+        super().build(input_shape)  
+    
+    def call(self, x):
+        """
+        x: 特征的索引矩阵;
+        二阶特征: 索引查到各自的emb后，计算 <v1,v2>x1x2，这里实现时是 0.5*((emb1+emb2)^2 - emb1^2 - emb2^2)=emb1*emb2 
+                 <emb1,emb2> != emb1*emb2 前者是内积得到的是标量，后者是element-wise的逐点相乘得到一个相同size的向量
+        一阶特征: 直接根据idx查到权重w后求和，就是个LR
+        """
+        # 一阶特征
+        x_1st_order = tf.reduce_sum(tf.nn.embedding_lookup(self.kernel_w,x),axis=1)
+        # 二阶特征 | a*b+a*c+b*c
+        x_emb = tf.nn.embedding_lookup(self.kernel_emb,x)
+        x_square_of_sum = tf.square(tf.reduce_sum(x_emb,axis=1))  # (a+b+c)^2
+        x_sum_of_square = tf.reduce_sum(tf.square(x_emb),axis=1)  # a^2 + b^2 + c^2
+        x_2nd_order = 0.5*(x_square_of_sum - x_sum_of_square) # a*b+b*c+a*c
+        x_2nd_order = tf.reduce_sum(x_2nd_order,axis=1,keepdims=True)
+        fm_res = x_1st_order + x_2nd_order
+        return fm_res
+
+    def compute_output_shape(self, input_shape):
+        """
+        如 (100,10) 100个样本每个10个category特征，找到10个emb后取均值，返货结果就是 (100,emb_size)
+        """
+        return (input_shape[0], self.emb_size)
+    
+    @staticmethod
+    def feature_idx_to_sparse_indices(arr):
+        """
+        把
+        [[16,99,378,899],
+         [12,89,103,500]]
+        映射成:
+        [[0,16],[0,99],[0,378],[0,899],
+         [1,12],[1,89],[1,103],[1,500]] 
+        用于给tf.sparse.SparseTensor提供indices参数，获得系数矩阵
+        """
+        return np.array([[[idx,v] for v in row] for idx,row, in enumerate(arr)]).reshape(arr.shape[0]*arr.shape[1],-1)
+
+fml = FMLayer(feature_size=cat_featureSize,emb_size=4)
+
+x.shape
+
+x=onehot_features
+x[:5,:5]
+# 一阶特征
+x_1st_order = tf.reduce_sum(tf.nn.embedding_lookup(fml.kernel_w,x),axis=1)
+# 二阶特征 | a*b+a*c+b*c
+x_emb = tf.nn.embedding_lookup(fml.kernel_emb,x)
+x_square_of_sum = tf.square(tf.reduce_sum(x_emb,axis=1))  # (a+b+c)^2
+x_sum_of_square = tf.reduce_sum(tf.square(x_emb),axis=1)  # a^2 + b^2 + c^2
+x_2nd_order = 0.5*(x_square_of_sum - x_sum_of_square) # a*b+b*c+a*c
+x_2nd_order = tf.reduce_sum(x_2nd_order,axis=1,keepdims=True)
+x_1st_order.shape
+x_2nd_order.shape
+fm_res = x_1st_order + x_2nd_order
+x_1st_order.numpy()[:2,:2]
+x_2nd_order.numpy()[:2,:2]
+fm_res.numpy()[:2,:2]
+
+print(">>> 直接用FMLayers计算")
+fml(x).numpy()[:2,:2]
+
+# x = cat_features
+# x = tf.nn.embedding_lookup(params=fml.kernel,ids=x)
+# 假设两个样本，各自有三个onehot特征，查出来的4维emb如下，每个样本都是[a,b,c] 且 a,b,c 均是4维emb向量
+x = np.array([[[1.0,2.0,3.0,4.0],[1.0,2.0,3.0,4.0],[10,10,10,10]],
+              [[0.1,0.1,0.1,0.1],[0.1,0.2,0.3,0.4],[2.,2.,2.,2.]]])
+x = tf.constant(x)
+# (a+b+c)^2
+x_square_of_sum = tf.square(tf.reduce_sum(x,axis=1))
+# a^2 + b^2 + c^2
+x_sum_of_square = tf.reduce_sum(tf.square(x),axis=1)
+# FM二阶特征交叉 | a*b+a*c+b*c
+x_2nd_order = (x_square_of_sum - x_sum_of_square)*0.5
+
+x.numpy()
+x_2nd_order.numpy()
+
+class MultiFCLayers(tf.keras.layers.Layer):
+    def __init__(self,layer_units,**kwargs):
+        super().__init__(**kwargs)
+        self.layer_units = layer_units
+        for idx,unit in enumerate(layer_units):
+            if idx == 0 :
+                continue
+            self.add_weight(name=f"layer_{idx}",shape=(layer_units[idx-1],unit),initializer="glorot_uniform",trainable=True)
+    
+    def build(self, input_shape):
+        super().build(input_shape)
+        self.layer0=self.add_weight(name="layer_0",shape=(input_shape[-1],self.layer_units[0]),initializer="glorot_uniform",trainable=True)
+        self.weights_dict={weight.name.split(":")[0]:weight for weight in self.weights}
+        
+        
+    def call(self,x):
+        for idx,_ in enumerate(self.layer_units):
+            x = tf.matmul(x,self.weights_dict[f'layer_{idx}'])
+        x = tf.nn.sigmoid(x)
+        return x
+    
+
+emb_size=8
+nn_input_shape=(1000,onehot_features.shape[1]*emb_size+num_features.shape[1])
+mfcl=MultiFCLayers([2,8,10])
+mfcl.build(input_shape=nn_input_shape)
+mfcl(np.random.random_sample(nn_input_shape).astype(np.float32))
+
+class DeepFM(tf.keras.Model):
+    """
+    注: 这里想支持多个multihot特征
+    """
+    def __init__(self, layer_units, feature_size, emb_size=30,dense_size=13,onehot_size=26,multihot_size=2):
+        multihot_size=[] if multihot_size is None else multihot_size
+        assert layer_units[-1]==1,"nn最后一层要输出1维，方便和fm的结果加和"
+        super().__init__()
+        self.dense_size=dense_size
+        
+        self.onehot_size=onehot_size
+        self.multihot_size=multihot_size
+
+        self.feature_size = feature_size
+        self.emb_size = emb_size
+        self.layer_units = layer_units
+        
+        # FM kernels
+        self.fm_w = self.add_weights(name="fm_w",shape=(self.feature_size,1),initializer="glorot_uniform",trainable=True)
+        self.fm_emb = self.add_weights(name="fm_emb",shape=(self.feature_size,self.emb_size),initializer="glorot_uniform",trainable=True)
+        # NN kernels
+        self.nn_layers = []
+        self.nn_input_size = emb_size*(onehot_size+multihot_size)+dense_size
+        for idx,units in enumerate(self.layer_units):
+            if idx==0:
+                self.add_weights(name=f"nn_layer_{idx}",shape=(self.nn_input_size,units),initializer="glorot_uni")
+            self.add_weights(name=f"nn_layer_{idx}",shape=())
+        
+        
+#         self.nn = MultiFCLayers(layer_units)
+#         self.fm = FMLayer(feature_size,emb_size)
+#         assert layer_units[-1]==1,"nn最后一层要输出1维，方便和fm的结果加和"
+#         nn_input_shape=(onehot.shape[0],onehot.shape[-1]*self.emb_size+dense.shape[-1])
+#         self.nn.build(nn_input_shape)
+        
+
+class DeepFM(tf.keras.Model):
+    def __init__(self, layer_units, feature_size, emb_size=30,dense_size=13,onehot_size=26,multihot_size=0):
+        super().__init__()
+#         self.dense_idx=dense_size
+#         self.onehot_idx=dense_idx+onehot_size
+#         self.multihot_idx=onehot_idx+multihot_size
+        self.feature_size = feature_size
+        self.emb_size = emb_size
+        self.layer_units = layer_units
+        self.nn = MultiFCLayers(layer_units)
+        self.fm = FMLayer(feature_size,emb_size)
+        assert layer_units[-1]==1,"nn最后一层要输出1维，方便和fm的结果加和"
+        nn_input_shape=(None,onehot_size*self.emb_size+dense_size)
+        self.nn.build(nn_input_shape)
+
+
+    
+    def call(self,inputs,training=None):
+        """
+        注意inputs接受的参数顺序
+        """
+        dense=inputs[0]
+        onehot=inputs[1]
+        multihot = inputs[2]
+        onehot=tf.cast(onehot,tf.int32)
+        multihot=tf.cast(multihot,tf.int32)
+        assert dense.shape[0]==onehot.shape[0]==multihot.shape[0],"三类特征的batchsize不一致"
+        
+        fm_res=self.fm(onehot)
+        emb=tf.nn.embedding_lookup(self.fm.kernel_emb,onehot)
+        nn_emb_part=tf.reshape(emb,(-1,onehot.shape[-1]*self.emb_size))
+        nn_res=self.nn(tf.concat([dense,nn_emb_part],axis=1))
+        
+        return tf.nn.sigmoid(fm_res+nn_res) #fm_res,nn_res
+        
+
+
+M=DeepFM(layer_units=[4,4,1],feature_size=cat_featureSize,emb_size=4,dense_size=13,onehot_size=26,multihot_size=0)
+M.fm
+M.nn
+M.layers
+
+cat_features.shape
+num_features.shape
+inp=np.concatenate([num_features,cat_features],axis=1).astype(np.float32)
+inp.shape
+print(">>> 在Model里按索引取的dennse onehot multihot的shape依次如下:")
+dense=inp[:,:M.dense_idx]
+onehot=inp[:,M.dense_idx:M.onehot_idx]
+multihot=inp[:,M.onehot_idx:M.multihot_idx]
+dense.shape
+onehot.shape
+multihot.shape,"注意到multihot即使是空数组，也可以有shape"
+
+call_res=M([dense,onehot,multihot]).numpy()
+print(">>> Model.call")
+call_res.shape
+call_res[:10]
+
+pred_res=M.predict([dense,onehot,multihot])
+print(">>> Model.predict")
+pred_res.shape
+pred_res[:10]
+
+
+class DeepFM(tf.keras.Model):
+    """
+    注: 这里想支持多个multihot特征
+    """
+    def __init__(self, layer_units, feature_size, emb_size=30,dense_size=13,onehot_size=26,multihot_size=None):
+        multihot_size=[] if multihot_size is None else multihot_size
+        super().__init__()
+        self.dense_idx=dense_size
+        self.onehot_idx=dense_idx+onehot_size
+        # 如 []
+        self.multihot_idx_list=[onehot_idx+size for size in multihot_size]
+        self.feature_size = feature_size
+        self.emb_size = emb_size
+        self.layer_units = layer_units
+        
+        # FM kernels
+        self.fm_w = self.add_weights(name="fm_w",shape=(self.feature_size,1),initializer="glorot_uniform",trainable=True)
+        self.fm_emb = self.add_weights(name="fm_emb",shape=(self.feature_size,self.emb_size),initializer="glorot_uniform",trainable=True)
+        # NN kernels
+        self.nn_layers = []
+        for idx,units in enumerate(self.layer_units):
+            if idx==0:
+                nn_input_size = emb_size*(onehot_size+len(self.multihot_idx_list))
+            self.add_weights(name=f"nn_layer_{idx}",shape=())
+            
+        self.nn = MultiFCLayers(layer_units)
+        self.fm = FMLayer(feature_size,emb_size)
+        assert layer_units[-1]==1,"nn最后一层要输出1维，方便和fm的结果加和"
+        nn_input_shape=(onehot.shape[0],onehot.shape[-1]*self.emb_size+dense.shape[-1])
+        self.nn.build(nn_input_shape)
+
+
+
+
+
+
+
+# 梯度下降方式求解平方根
+import math
+x=16
+a=x//2
+lr=0.01
+cnt=0
+
+while True:
+    # 手动求导后得到梯度的解析式
+    grad=2*(a*a-x)*2*a
+    print(f"[根]:{a:.4f<}, [梯度]:{grad:.4f}, [更新后的根]:{a+grad*lr:.4f}")
+    a -= grad*lr
+    if abs(a*a - x) < 0.00000001:
+        print("stop at:", a)
+        break
+    cnt += 1
+    if cnt > 10:
+        break
+
+
+
+
+
+
+
+
