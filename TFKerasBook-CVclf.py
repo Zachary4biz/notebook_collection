@@ -803,6 +803,32 @@ checkpoint_path
 
 # #### fine-tuning
 
+# In[1]:
+
+
+def train_abc(model_inp, optimizer_inp, step, step_per_epoch):
+    # 第一个epoch记录100个step，后续每个epoch只记录10次
+    assert step_per_epoch >=100
+    with tf.GradientTape() as tape:
+        pred_batch = model_inp(image_batch, training=True)
+        loss_batch = ce_loss_fn(label_batch,pred_batch)
+        acc_batch = acc_fn(label_batch,pred_batch)
+    gradients = tape.gradient(loss_batch, model_inp.trainable_variables)
+    _ = optimizer_inp.apply_gradients(zip(gradients, model_inp.trainable_variables))
+    b_loss, b_acc = tf.math.reduce_mean(loss_batch),tf.math.reduce_mean(acc_batch)
+    if (e==0 and step % (step_per_epoch//100)==0) or (e>0 and step % (step_per_epoch//10) == 0):
+        _ = tf.summary.scalar('train_loss', b_loss, step=step+e*step_per_epoch)
+        _ = tf.summary.scalar('train_acc', b_acc, step=step+e*step_per_epoch)
+    for i in model.weights:
+        if "moving" in i.name:
+            _ = tf.summary.histogram(i.name,i, step=step+e*step_per_epoch)
+    for i in model.weights:
+        _ = tf.summary.histogram(i.name,i, step=step+e*step_per_epoch)
+#     for i in gradients:  | 保存梯度会报错？
+#         _ = tf.summary.histogram(i.name,i, step=step+e*step_per_epoch, description=f"grad of {i.name}")
+    return loss_batch, acc_batch
+
+
 # In[93]:
 
 

@@ -35,7 +35,7 @@ checkpoint_dir = baseDir+"/ckpt"
 
 # # SubclassedM
 
-# ## LSTMCRF
+# ## BiLSTMCRF
 
 # In[380]:
 
