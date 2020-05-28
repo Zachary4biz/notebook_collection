@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[73]:
+# In[3]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
@@ -16,7 +16,7 @@ import itertools
 import os
 
 
-# In[74]:
+# In[4]:
 
 
 import tensorflow as tf
@@ -26,7 +26,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# In[16]:
+# In[5]:
 
 
 baseDir="/home/zhoutong/notebook_collection/tmp/NLP_ner/lstmcrf"
@@ -36,11 +36,11 @@ checkpoint_dir = baseDir+"/ckpt"
 # # SubclassedM
 
 # ## BiLSTMCRF
-
-# In[380]:
-
-
 # 参考： https://github.com/saiwaiyanyu/bi-lstm-crf-ner-tf2.0/blob/master/train.py
+
+# In[8]:
+
+
 class LSTMCRF(tf.keras.Model):
     def __init__(self, label_size, lstm_units, vocab_size, emb_dim):
         super().__init__()
@@ -76,26 +76,88 @@ class LSTMCRF(tf.keras.Model):
 
 
 # ## BERTLayer
+# 参考: https://towardsdatascience.com/simple-bert-using-tensorflow-2-0-132cb19e9b22
 
-# In[20]:
+# In[17]:
 
 
 import tensorflow_hub as hub
+import bert
 
 
-# In[ ]:
+# ### init
+
+# In[25]:
 
 
 max_seq_length = 128  # Your choice here.
-input_word_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
-                                       name="input_word_ids")
-input_mask = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
-                                   name="input_mask")
-segment_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
-                                    name="segment_ids")
-bert_layer = hub.KerasLayer("https://tfhub.dev/tensorflow/bert_zh_L-12_H-768_A-12/1",
-                            trainable=True)
+input_word_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32, name="input_word_ids")
+input_mask = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32, name="input_mask")
+segment_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32, name="segment_ids")
+bert_layer = hub.KerasLayer("https://tfhub.dev/tensorflow/bert_zh_L-12_H-768_A-12/1",trainable=True)
 pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
+model = tf.keras.Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=[pooled_output, sequence_output])
+print(">>> 三个输入:")
+print(f">>> input_word_ids: {input_word_ids.shape}")
+print(f">>> input_mask: {input_mask.shape}")
+print(f">>> segment_ids: {segment_ids.shape}"+"\n"*2)
+
+# tfhub里除了模型也带了配置文件，比如vocab_file
+vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
+do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
+tokenizer = bert.bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+print(f">>> tfhub的vocab_file: {vocab_file}")
+
+
+# In[35]:
+
+
+def get_masks(tokens, max_seq_length):
+    """Mask for padding"""
+    if len(tokens)>max_seq_length:
+        raise IndexError("Token length more than max seq length!")
+    return np.array([1]*len(tokens) + [0] * (max_seq_length - len(tokens)))
+
+
+def get_segments(tokens, max_seq_length):
+    """Segments: 0 for the first sequence, 1 for the second"""
+    if len(tokens)>max_seq_length:
+        raise IndexError("Token length more than max seq length!")
+    segments = []
+    current_segment_id = 0
+    for token in tokens:
+        segments.append(current_segment_id)
+        if token == "[SEP]":
+            current_segment_id = 1
+    return np.array(segments + [0] * (max_seq_length - len(tokens)))
+
+
+def get_ids(tokens, tokenizer, max_seq_length):
+    """Token ids from Tokenizer vocab"""
+    token_ids = tokenizer.convert_tokens_to_ids(tokens)
+    input_ids = token_ids + [0] * (max_seq_length-len(token_ids))
+    return np.array(input_ids)
+
+
+# In[32]:
+
+
+tokens=tokenizer.tokenize("MASK i come from america")
+tokens
+tokenizer.convert_tokens_to_ids(tokens)
+
+
+# In[90]:
+
+
+s = ["This is a nice sentence.","another sentence"]
+stokens = [ ["[CLS]"]+tokenizer.tokenize(i)+["[SEP]"] for i in s]
+
+input_ids = np.array([get_ids(i, tokenizer, max_seq_length) for i in stokens])
+input_masks = np.array([get_masks(i, max_seq_length) for i in stokens])
+input_segments = np.array([get_segments(i, max_seq_length) for i in stokens])
+
+pool_embs, all_embs = model.predict([input_ids,input_masks,input_segments])
 
 
 # In[ ]:
@@ -156,7 +218,7 @@ class BertLayer(tf.layers.Layer):
 
 # # LoadData
 
-# In[489]:
+# In[95]:
 
 
 pad_length = 100
@@ -193,7 +255,7 @@ train_dataset = _yield_samples(source[:train_size],target[:train_size])
 test_dataset = _yield_samples(source[train_size:],target[train_size:])
 
 
-# In[482]:
+# In[96]:
 
 
 idx2word=dict([(v,k) for k,v in word2idx.items()])
@@ -218,7 +280,7 @@ sen_idx,tag_idx
 
 # # InitModel | Params
 
-# In[511]:
+# In[97]:
 
 
 config={

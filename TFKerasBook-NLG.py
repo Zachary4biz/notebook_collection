@@ -5,7 +5,7 @@
 # 
 # 参照 [官网tutorials](https://www.tensorflow.org/tutorials/text/text_generation#%E4%B8%8B%E8%BD%BD%E8%8E%8E%E5%A3%AB%E6%AF%94%E4%BA%9A%E6%95%B0%E6%8D%AE%E9%9B%86)
 
-# In[3]:
+# In[1]:
 
 
 from IPython.core.interactiveshell import InteractiveShell
